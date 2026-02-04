@@ -1,0 +1,176 @@
+<Application x:Class="DupFree.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             StartupUri="Views/MainWindow.xaml">
+    <Application.Resources>
+        <!-- Theme resources (used as DynamicResource keys) -->
+        <SolidColorBrush x:Key="AppBackground" Color="#1E1E1E" />
+        <SolidColorBrush x:Key="TopBarBackground" Color="#252526" />
+        <SolidColorBrush x:Key="PanelBackground" Color="#1A1A1A" />
+        <SolidColorBrush x:Key="WindowForeground" Color="#FFFFFF" />
+        <SolidColorBrush x:Key="ControlForeground" Color="#CCCCCC" />
+        <SolidColorBrush x:Key="AccentBrush" Color="#0078D7" />
+        <SolidColorBrush x:Key="BorderBrush" Color="#3F3F46" />
+        <SolidColorBrush x:Key="HeaderBackground" Color="#2D2D30" />
+        <SolidColorBrush x:Key="ScrollBarBackground" Color="#3E3E42" />
+        <SolidColorBrush x:Key="ScanButtonBrush" Color="#28A745" />
+        <SolidColorBrush x:Key="SeparatorBrush" Color="#3F3F46" />
+        <SolidColorBrush x:Key="AlternatingRowBackground" Color="#252526" />
+
+        <!-- Control background brush -->
+        <SolidColorBrush x:Key="ControlBackground" Color="#2D2D30" />
+
+        <!-- Default Button style uses Accent for primary look -->
+        <Style TargetType="Button">
+            <Setter Property="Background" Value="{DynamicResource ControlBackground}" />
+            <Setter Property="Foreground" Value="{DynamicResource WindowForeground}" />
+            <Setter Property="Padding" Value="6,3" />
+        </Style>
+
+        <!-- ComboBox styling so dropdowns follow theme -->
+        <Style TargetType="ComboBox">
+            <Setter Property="Background" Value="{DynamicResource ControlBackground}" />
+            <Setter Property="Foreground" Value="{DynamicResource WindowForeground}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="4,3" />
+        </Style>
+
+        <Style TargetType="ComboBoxItem">
+            <Setter Property="Background" Value="{DynamicResource PanelBackground}" />
+            <Setter Property="Foreground" Value="{DynamicResource WindowForeground}" />
+            <Setter Property="Padding" Value="8,4" />
+            <Style.Triggers>
+                <Trigger Property="IsSelected" Value="True">
+                    <Setter Property="Background" Value="{DynamicResource AccentBrush}" />
+                    <Setter Property="Foreground" Value="White" />
+                </Trigger>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#3E3E42" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- ListViewItem style: only selected item is highlighted with AccentBrush -->
+        <Style TargetType="ListViewItem">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Foreground" Value="{DynamicResource WindowForeground}" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Padding" Value="6,4" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ListViewItem">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}" SnapsToDevicePixels="true">
+                            <ContentPresenter />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource AccentBrush}" />
+                                <Setter Property="Foreground" Value="White" />
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#2A2A2A" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- GridViewColumnHeader style -->
+        <Style TargetType="GridViewColumnHeader">
+            <Setter Property="Background" Value="{DynamicResource HeaderBackground}" />
+            <Setter Property="Foreground" Value="{DynamicResource WindowForeground}" />
+            <Setter Property="Padding" Value="6,4" />
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}" />
+            <Setter Property="BorderThickness" Value="0,0,0,1" />
+        </Style>
+
+        <!-- DataGrid and related styling -->
+        <Style TargetType="DataGrid">
+            <Setter Property="Background" Value="{DynamicResource PanelBackground}" />
+            <Setter Property="Foreground" Value="{DynamicResource WindowForeground}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}" />
+        </Style>
+
+        <Style TargetType="DataGridColumnHeader">
+            <Setter Property="Background" Value="{DynamicResource HeaderBackground}" />
+            <Setter Property="Foreground" Value="{DynamicResource WindowForeground}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}" />
+            <Setter Property="Padding" Value="6,4" />
+        </Style>
+
+        <Style TargetType="DataGridCell">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Foreground" Value="{DynamicResource WindowForeground}" />
+            <Setter Property="Padding" Value="6,4" />
+            <Style.Triggers>
+                <Trigger Property="IsSelected" Value="True">
+                    <Setter Property="Background" Value="{DynamicResource AccentBrush}" />
+                    <Setter Property="Foreground" Value="White" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style TargetType="DataGridRow">
+            <Style.Triggers>
+                <Trigger Property="ItemsControl.AlternationIndex" Value="1">
+                    <Setter Property="Background" Value="{DynamicResource AlternatingRowBackground}" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- ScrollBar styling for dark theme -->
+        <Style TargetType="ScrollBar">
+            <Setter Property="Background" Value="{DynamicResource ScrollBarBackground}" />
+            <Setter Property="Foreground" Value="{DynamicResource ControlForeground}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ScrollBar">
+                        <Grid Background="{TemplateBinding Background}">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <RepeatButton Grid.Row="0" Command="ScrollBar.LineUpCommand" Background="{DynamicResource ControlBackground}" Foreground="{DynamicResource WindowForeground}" Height="18">
+                                ▲
+                            </RepeatButton>
+                            <Track Grid.Row="1" x:Name="PART_Track" IsDirectionReversed="False" IsEnabled="{TemplateBinding IsMouseOver}">
+                                <Track.DecreaseRepeatButton>
+                                    <RepeatButton Command="ScrollBar.PageUpCommand" Background="{DynamicResource ScrollBarBackground}" />
+                                </Track.DecreaseRepeatButton>
+                                <Track.Thumb>
+                                    <Thumb Background="{DynamicResource ControlForeground}" />
+                                </Track.Thumb>
+                                <Track.IncreaseRepeatButton>
+                                    <RepeatButton Command="ScrollBar.PageDownCommand" Background="{DynamicResource ScrollBarBackground}" />
+                                </Track.IncreaseRepeatButton>
+                            </Track>
+                            <RepeatButton Grid.Row="2" Command="ScrollBar.LineDownCommand" Background="{DynamicResource ControlBackground}" Foreground="{DynamicResource WindowForeground}" Height="18">
+                                ▼
+                            </RepeatButton>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- TextBox styling for dark theme -->
+        <Style TargetType="TextBox">
+            <Setter Property="Background" Value="{DynamicResource ControlBackground}" />
+            <Setter Property="Foreground" Value="{DynamicResource WindowForeground}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}" />
+            <Setter Property="CaretBrush" Value="{DynamicResource WindowForeground}" />
+            <Setter Property="Padding" Value="4,2" />
+        </Style>
+
+        <!-- Window styling -->
+        <Style TargetType="Window">
+            <Setter Property="Background" Value="{DynamicResource AppBackground}" />
+            <Setter Property="Foreground" Value="{DynamicResource WindowForeground}" />
+            <Setter Property="TextElement.Foreground" Value="{DynamicResource WindowForeground}" />
+        </Style>
+    </Application.Resources>
+</Application>

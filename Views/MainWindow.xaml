@@ -1,0 +1,167 @@
+<Window x:Class="DupFree.Views.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="DupFree - Duplicate File Finder" Height="800" Width="1400"
+    Background="{DynamicResource AppBackground}"
+    Foreground="{DynamicResource WindowForeground}">
+    <DockPanel>
+        <!-- Top Menu Bar -->
+        <Border DockPanel.Dock="Top" Background="{DynamicResource TopBarBackground}" BorderThickness="0,0,0,1" BorderBrush="{DynamicResource SeparatorBrush}">
+            <StackPanel>
+                <StackPanel Orientation="Horizontal" Margin="10">
+                <Button Name="BrowseButton" Click="BrowseButton_Click" Padding="10,5" Margin="0,0,10,0" Background="{DynamicResource AccentBrush}" Foreground="White" MinWidth="100">
+                    📁 Browse
+                </Button>
+                <ComboBox Name="LimitComboBox" Width="120" Margin="0,0,10,0" SelectedIndex="0" ToolTip="Limit files scanned">
+                    <ComboBoxItem>All</ComboBoxItem>
+                    <ComboBoxItem>100</ComboBoxItem>
+                    <ComboBoxItem>1000</ComboBoxItem>
+                    <ComboBoxItem>100000</ComboBoxItem>
+                </ComboBox>
+                <Button Name="ScanButton" Click="ScanButton_Click" Padding="10,5" Margin="0,0,10,0" Background="{DynamicResource AccentBrush}" Foreground="White" MinWidth="100" >
+                    🔍 Scan
+                </Button>
+                <Button Name="CancelButton" Click="CancelButton_Click" Padding="10,5" Margin="0,0,10,0" Background="#DC3545" Foreground="White" MinWidth="100" Visibility="Collapsed">
+                    ⊘ Cancel
+                </Button>
+                <Separator Margin="10,0" Width="1" Background="{DynamicResource SeparatorBrush}" />
+                <Button Name="IconViewButton" Click="IconViewButton_Click" Padding="8,5" Margin="0,0,5,0" ToolTip="Icon View" Background="{DynamicResource ControlBackground}" Foreground="{DynamicResource WindowForeground}">
+                    🗷
+                </Button>
+                <Button Name="LargeIconViewButton" Click="LargeIconViewButton_Click" Padding="8,5" Margin="0,0,5,0" ToolTip="Large Icon View" Background="{DynamicResource ControlBackground}" Foreground="{DynamicResource WindowForeground}">
+                    ⊞
+                </Button>
+                <Button Name="XLargeIconViewButton" Click="XLargeIconViewButton_Click" Padding="8,5" Margin="0,0,5,0" ToolTip="Extra Large Icon View" Background="{DynamicResource ControlBackground}" Foreground="{DynamicResource WindowForeground}">
+                    ⊞⊞
+                </Button>
+                <Button Name="ListViewButton" Click="ListViewButton_Click" Padding="8,5" Margin="0,0,10,0" ToolTip="List View" Background="{DynamicResource ControlBackground}" Foreground="{DynamicResource WindowForeground}">
+                    ☰
+                </Button>
+                <Separator Margin="10,0" Width="1" Background="{DynamicResource SeparatorBrush}" />
+                <TextBlock VerticalAlignment="Center" Margin="8,0,4,0" Foreground="{DynamicResource WindowForeground}">Sort by:</TextBlock>
+                <Separator Margin="10,0" Width="1" Background="{DynamicResource SeparatorBrush}" />
+                <ComboBox Name="SortComboBox" Width="150" Margin="0,0,0,0" SelectionChanged="SortComboBox_SelectionChanged">
+                    <ComboBoxItem>Name</ComboBoxItem>
+                    <ComboBoxItem>Size</ComboBoxItem>
+                    <ComboBoxItem>Modified Date</ComboBoxItem>
+                    <ComboBoxItem>Path</ComboBoxItem>
+                </ComboBox>
+                <Separator Margin="10,0" Width="1" Background="{DynamicResource SeparatorBrush}" />
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="10,0,0,0">
+                    <TextBlock VerticalAlignment="Center" Margin="0,0,4,0" Foreground="{DynamicResource WindowForeground}">Theme:</TextBlock>
+                    <ComboBox Name="ThemeComboBox" Width="100" SelectionChanged="ThemeComboBox_SelectionChanged">
+                        <ComboBoxItem>Light</ComboBoxItem>
+                        <ComboBoxItem>Dark</ComboBoxItem>
+                    </ComboBox>
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="10,0,0,0">
+                    <TextBlock VerticalAlignment="Center" Margin="0,0,4,0" Foreground="{DynamicResource WindowForeground}">Size units:</TextBlock>
+                    <ComboBox Name="UnitComboBox" Width="120" SelectionChanged="UnitComboBox_SelectionChanged">
+                        <ComboBoxItem>Auto</ComboBoxItem>
+                        <ComboBoxItem>Bytes</ComboBoxItem>
+                        <ComboBoxItem>KB</ComboBoxItem>
+                        <ComboBoxItem>MB</ComboBoxItem>
+                        <ComboBoxItem>GB</ComboBoxItem>
+                        <ComboBoxItem>TB</ComboBoxItem>
+                    </ComboBox>
+                </StackPanel>
+            </StackPanel>
+            <TextBlock Name="StatusText" Margin="10,0,10,10" Foreground="{DynamicResource WindowForeground}">Ready</TextBlock>
+            <ProgressBar Name="ProgressBar" Height="4" Margin="10,0,10,10" Foreground="{DynamicResource AccentBrush}" />
+            </StackPanel>
+        </Border>
+
+        <!-- Main Content Area -->
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <!-- Results Container -->
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <!-- List view with DataGrid -->
+                <DataGrid Name="ResultsDataGrid" Grid.Row="0" Visibility="Visible" 
+                          AutoGenerateColumns="False" 
+                          IsReadOnly="True"
+                          SelectionMode="Extended"
+                          CanUserResizeColumns="True"
+                          CanUserSortColumns="True"
+                          KeyDown="ResultsDataGrid_KeyDown"
+                          Background="{DynamicResource PanelBackground}" 
+                          Foreground="{DynamicResource WindowForeground}"
+                          HeadersVisibility="Column"
+                          GridLinesVisibility="None"
+                          RowBackground="{DynamicResource PanelBackground}"
+                          AlternatingRowBackground="{DynamicResource AlternatingRowBackground}"
+                          EnableRowVirtualization="True"
+                          EnableColumnVirtualization="True"
+                          ScrollViewer.CanContentScroll="True"
+                          VirtualizingPanel.IsVirtualizing="True"
+                          VirtualizingPanel.VirtualizationMode="Recycling">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="Name" Width="300" Binding="{Binding FileName}" />
+                        <DataGridTextColumn Header="Path" Width="600" Binding="{Binding FilePath}" />
+                        <DataGridTextColumn Header="Size" Width="100" Binding="{Binding SizeFormatted}" />
+                        <DataGridTextColumn Header="Dup Space" Width="120" Binding="{Binding DupSpace}" />
+                        <DataGridTextColumn Header="Dup Count" Width="80" Binding="{Binding DupCount}" />
+                    </DataGrid.Columns>
+                </DataGrid>
+                
+                <!-- Old ListView - kept hidden for fallback -->
+                <ListView Name="ResultsListView" Grid.Row="0" Visibility="Collapsed" KeyDown="ResultsListView_KeyDown" Background="{DynamicResource PanelBackground}" Foreground="{DynamicResource WindowForeground}" DisplayMemberPath="">
+                    <ListView.View>
+                        <GridView>
+                            <GridViewColumn Header="Name" Width="300">
+                                <GridViewColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding FileName}" />
+                                    </DataTemplate>
+                                </GridViewColumn.CellTemplate>
+                            </GridViewColumn>
+                            <GridViewColumn Header="Path" Width="600">
+                                <GridViewColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding FilePath}" />
+                                    </DataTemplate>
+                                </GridViewColumn.CellTemplate>
+                            </GridViewColumn>
+                            <GridViewColumn Header="Size" Width="100">
+                                <GridViewColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding SizeFormatted}" />
+                                    </DataTemplate>
+                                </GridViewColumn.CellTemplate>
+                            </GridViewColumn>
+                            <GridViewColumn Header="Dup Space" Width="120">
+                                <GridViewColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding DupSpace}" />
+                                    </DataTemplate>
+                                </GridViewColumn.CellTemplate>
+                            </GridViewColumn>
+                            <GridViewColumn Header="Dup Count" Width="80">
+                                <GridViewColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding DupCount}" />
+                                    </DataTemplate>
+                                </GridViewColumn.CellTemplate>
+                            </GridViewColumn>
+                        </GridView>
+                    </ListView.View>
+                </ListView>
+
+                <!-- Fallback panel for grouped visual modes -->
+                <ScrollViewer Name="ResultsScrollViewer" Grid.Row="0" Visibility="Collapsed" PreviewKeyDown="ResultsPanel_PreviewKeyDown">
+                    <StackPanel Name="ResultsPanel" Background="{DynamicResource PanelBackground}" PreviewKeyDown="ResultsPanel_PreviewKeyDown" Focusable="True" />
+                </ScrollViewer>
+            </Grid>
+        </Grid>
+    </DockPanel>
+</Window>
