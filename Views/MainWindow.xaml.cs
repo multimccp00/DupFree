@@ -4,39 +4,67 @@ using System.IO;
 using System.Linq;
 using System.Windows;
 using System.Threading.Tasks;
+using System.Threading;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media;
 using DupFree.Models;
 using DupFree.Services;
 using System.Windows.Data;
+using System.ComponentModel;
 using System.Collections.Generic;
 using Microsoft.VisualBasic.FileIO;
 using Ookii.Dialogs.Wpf;
+using System.Runtime.InteropServices;
+using System.Windows.Interop;
 
 namespace DupFree.Views
 {
     public partial class MainWindow : Window
     {
+        // Windows API for dark title bar
+        [DllImport("dwmapi.dll", PreserveSig = true)]
+        private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int attrValue, int attrSize);
+
+        private const int DWMWA_USE_IMMERSIVE_DARK_MODE = 20;
         private DuplicateSearchService _searchService;
         private List<string> _selectedDirectories;
         private List<DuplicateGroupViewModel> _groupViewModels;
-        private string _currentViewMode = "large_icons";
+        private string _currentViewMode = "list";
         private string _currentSortBy = "Name";
+        private string _searchText = string.Empty;
         private List<FileItemViewModel> _currentGridFiles = new();
         private readonly Dictionary<int, FrameworkElement> _realizedGridItems = new();
         private bool _isVirtualGridActive = false;
         private double _virtualItemWidth = 156;
         private double _virtualItemHeight = 196;
         private int _virtualColumns = 1;
+        private long _totalDeletedSize = 0;  // Track space saved from deletions
+        private int _totalFilesScanned = 0;  // Track total files scanned during duplicate search
+        private bool _hasScannedOnce = false;
         private int _selectedGridIndex = -1;
         private int _gridColumns = 0;
         private System.Threading.CancellationTokenSource _scanCancellation;
         private int _filesRendered = 0;
         private const int FILES_PER_BATCH = 500;  // Render 500 files at a time
+        private readonly SemaphoreSlim _thumbnailSemaphore = new SemaphoreSlim(4);
+        private readonly HashSet<string> _thumbnailLoading = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         public MainWindow()
         {
             InitializeComponent();
+            
+            // Apply dark title bar
+            SourceInitialized += (s, e) => ApplyDarkTitleBar();
+            
+            // Load saved settings
+            SettingsService.LoadFromFile();
+            
+            // Initialize grid dimensions from settings
+            int gridSize = SettingsService.GridPictureSize;
+            _virtualItemWidth = gridSize + 56;  // size + panel padding + margins
+            _virtualItemHeight = gridSize + (SettingsService.ShowGridFilePath ? 104 : 84); // adjust based on path display setting
+            
             _searchService = new DuplicateSearchService();
             // Ensure service events update UI on dispatcher thread
             _searchService.OnStatusChanged += (status) => Dispatcher.Invoke(() => StatusText.Text = status);
@@ -46,19 +74,33 @@ namespace DupFree.Views
             // Show large-icon grid by default (after collections are initialized)
             DisplayResults();
 
-            // Initialize theme and unit comboboxes
-            ThemeComboBox.SelectedIndex = Services.SettingsService.CurrentTheme == "dark" ? 1 : 0;
+            // Initialize unit combobox and force dark theme
             UnitComboBox.SelectedIndex = (int)Services.SettingsService.CurrentSizeUnit;
-
-            // Apply initial theme
-            ApplyTheme(Services.SettingsService.CurrentTheme);
+            ApplyTheme("dark");
 
             Services.SettingsService.OnSettingsChanged += () =>
             {
                 // Refresh sizes and theme when settings change
                 RefreshSizes();
-                ApplyTheme(Services.SettingsService.CurrentTheme);
+                ApplyTheme("dark");
             };
+        }
+
+        private void ApplyDarkTitleBar()
+        {
+            try
+            {
+                var hwnd = new WindowInteropHelper(this).Handle;
+                if (hwnd != IntPtr.Zero)
+                {
+                    int darkMode = 1;
+                    DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, ref darkMode, sizeof(int));
+                }
+            }
+            catch
+            {
+                // Silently fail if API not available (older Windows versions)
+            }
         }
 
         private void RefreshSizes()
@@ -81,48 +123,134 @@ namespace DupFree.Views
             }
         }
 
+        private void SearchTextBox_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            _searchText = SearchTextBox.Text ?? string.Empty;
+            DisplayResults();
+        }
+
+        private void ResultsDataGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            UpdateSelectedCount();
+        }
+
+        private void ResultsListView_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            UpdateSelectedCount();
+        }
+
+        private void ResultsDataGrid_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+        {
+            if (ResultsDataGrid.SelectedItem is FileItemViewModel file)
+            {
+                OpenFile(file);
+            }
+        }
+
+        private void ResultsListView_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+        {
+            if (ResultsListView.SelectedItem is FileItemViewModel file)
+            {
+                OpenFile(file);
+            }
+        }
+
+        private void OpenFile(FileItemViewModel file)
+        {
+            try
+            {
+                if (File.Exists(file.FilePath))
+                {
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo()
+                    {
+                        FileName = file.FilePath,
+                        UseShellExecute = true
+                    });
+                }
+                else
+                {
+                    MessageBox.Show($"File not found: {file.FilePath}", "Error", MessageBoxButton.OK, MessageBoxImage.Warning);
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Could not open file: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        private void UpdateSelectedCount()
+        {
+            int selectedCount = 0;
+            if (ResultsDataGrid.Visibility == Visibility.Visible)
+            {
+                selectedCount = ResultsDataGrid.SelectedItems.Count;
+            }
+            else if (ResultsListView.Visibility == Visibility.Visible)
+            {
+                selectedCount = ResultsListView.SelectedItems.Count;
+            }
+            else if (_selectedGridIndex >= 0)
+            {
+                selectedCount = 1;
+            }
+
+            DeleteSelectedButton.Content = $"Delete Selected ({selectedCount})";
+        }
+
+        private void UpdateResultsCountText(int shown, int total)
+        {
+            // Results count text has been removed from UI
+        }
+
+        private List<FileItemViewModel> FilterFiles(IEnumerable<FileItemViewModel> files)
+        {
+            if (string.IsNullOrWhiteSpace(_searchText))
+            {
+                return files.ToList();
+            }
+
+            var query = _searchText.Trim();
+            return files.Where(f =>
+                    (!string.IsNullOrEmpty(f.FileName) && f.FileName.Contains(query, StringComparison.OrdinalIgnoreCase)) ||
+                    (!string.IsNullOrEmpty(f.FilePath) && f.FilePath.Contains(query, StringComparison.OrdinalIgnoreCase)))
+                .ToList();
+        }
+
         private void ApplyTheme(string theme)
         {
             var appResources = Application.Current.Resources;
             if (theme == "dark")
             {
-                appResources["AppBackground"] = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(30, 30, 30));
-                appResources["TopBarBackground"] = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(40, 40, 40));
-                appResources["PanelBackground"] = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(24, 24, 24));
+                appResources["AppBackground"] = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromArgb(255, 18, 24, 39));
+                appResources["TopBarBackground"] = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromArgb(255, 56, 65, 82));
+                appResources["ActionBarBackground"] = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromArgb(255, 32, 41, 56));
+                appResources["PanelBackground"] = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromArgb(255, 31, 41, 55));
                 appResources["WindowForeground"] = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Colors.White);
-                appResources["AccentBrush"] = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0, 120, 215));
-                appResources["ControlBackground"] = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(45, 45, 48));
-                appResources["ControlForeground"] = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(204, 204, 204));
-                appResources["BorderBrush"] = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(63, 63, 70));
-                appResources["HeaderBackground"] = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(45, 45, 48));
-                appResources["ScrollBarBackground"] = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(62, 62, 66));
-                appResources["SeparatorBrush"] = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(63, 63, 70));
-                appResources["AlternatingRowBackground"] = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(37, 37, 38));
-            }
-            else
-            {
-                appResources["AppBackground"] = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(245, 245, 245));
-                appResources["TopBarBackground"] = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Colors.White);
-                appResources["PanelBackground"] = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Colors.White);
-                appResources["WindowForeground"] = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(17, 17, 17));
-                appResources["AccentBrush"] = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(40, 167, 69));
-                appResources["ControlBackground"] = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Colors.White);
-                appResources["ControlForeground"] = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(34, 34, 34));
-                appResources["BorderBrush"] = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(204, 204, 204));
-                appResources["HeaderBackground"] = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(230, 230, 230));
-                appResources["ScrollBarBackground"] = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(224, 224, 224));
-                appResources["SeparatorBrush"] = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(204, 204, 204));
-                appResources["AlternatingRowBackground"] = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(245, 245, 245));
+                appResources["AccentBrush"] = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromArgb(255, 99, 102, 241));
+                appResources["ScanButtonBrush"] = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromArgb(255, 54, 100, 239));
+                appResources["ControlBackground"] = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromArgb(255, 55, 65, 81));
+                appResources["ControlForeground"] = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromArgb(255, 156, 163, 175));
+                appResources["BorderBrush"] = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromArgb(255, 75, 85, 99));
+                appResources["HeaderBackground"] = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromArgb(255, 31, 41, 55));
+                appResources["ScrollBarBackground"] = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromArgb(255, 31, 41, 55));
+                appResources["ScanButtonBrush"] = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromArgb(255, 37, 99, 235));
+                appResources["SeparatorBrush"] = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromArgb(255, 75, 85, 99));
+                appResources["AlternatingRowBackground"] = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromArgb(255, 31, 41, 55));
+                appResources["SidebarBackground"] = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromArgb(255, 11, 24, 55));
+                appResources["SidebarHover"] = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromArgb(255, 30, 58, 138));
+                appResources["DangerBrush"] = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromArgb(255, 239, 68, 68));
+                appResources["SuccessBrush"] = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromArgb(255, 16, 185, 129));
+                appResources["MutedForeground"] = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromArgb(255, 156, 163, 175));
+                appResources["OrangeBrush"] = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromArgb(255, 245, 158, 11));
             }
             
             // Force refresh ComboBox styles
             LimitComboBox.Foreground = (System.Windows.Media.Brush)appResources["ControlForeground"];
             SortComboBox.Foreground = (System.Windows.Media.Brush)appResources["ControlForeground"];
-            ThemeComboBox.Foreground = (System.Windows.Media.Brush)appResources["ControlForeground"];
             UnitComboBox.Foreground = (System.Windows.Media.Brush)appResources["ControlForeground"];
             
             // Update Scan button style separately
-            ScanButton.Background = appResources["AccentBrush"] as System.Windows.Media.Brush;
+            ScanButton.Background = appResources["ScanButtonBrush"] as System.Windows.Media.Brush;
         }
 
         private void BrowseButton_Click(object sender, RoutedEventArgs e)
@@ -134,6 +262,20 @@ namespace DupFree.Views
                 _selectedDirectories.Add(dialog.SelectedPath);
                 ScanButton.IsEnabled = true;
                 StatusText.Text = $"Selected: {dialog.SelectedPath}";
+                // Uncheck the browse button after selection
+                BrowseButton.IsChecked = false;
+
+                // Auto-scan only the first time a folder is selected
+                if (!_hasScannedOnce)
+                {
+                    _hasScannedOnce = true;
+                    ScanButton_Click(ScanButton, new RoutedEventArgs());
+                }
+            }
+            else
+            {
+                // Uncheck the browse button if the dialog is canceled
+                BrowseButton.IsChecked = false;
             }
         }
         private int? GetSelectedLimit()
@@ -180,6 +322,7 @@ namespace DupFree.Views
 
             var duplicates = await _searchService.FindDuplicatesAsync(_selectedDirectories, progress, limit, _scanCancellation.Token);
 
+            _totalFilesScanned = _searchService.TotalFilesScanned;
             _groupViewModels.Clear();
             // After scan, always load in list mode - no thumbnails needed
             foreach (var dupGroup in duplicates)
@@ -223,12 +366,7 @@ namespace DupFree.Views
 
         private void EnableGridViewButtons()
         {
-            IconViewButton.IsEnabled = true;
-            LargeIconViewButton.IsEnabled = true;
-            XLargeIconViewButton.IsEnabled = true;
-            IconViewButton.ToolTip = "Icon View";
-            LargeIconViewButton.ToolTip = "Large Icon View";
-            XLargeIconViewButton.ToolTip = "Extra Large Icon View";
+            // No-op: view toggles are always available
         }
 
         private void CancelButton_Click(object sender, RoutedEventArgs e)
@@ -261,6 +399,78 @@ namespace DupFree.Views
             }
         }
 
+        private void UpdateFooterStats()
+        {
+            if (FooterFilesChecked == null || FooterDuplicates == null || FooterSpaceWasted == null || FooterSpaceSaved == null)
+                return;
+            
+            int totalDuplicateFiles = 0;
+            long wastedSpace = 0;
+            
+            foreach (var group in _groupViewModels)
+            {
+                if (group.Files.Count == 0)
+                {
+                    continue;
+                }
+
+                totalDuplicateFiles += group.Files.Count;
+
+                // Count only extra copies (keep one per group)
+                var fileSize = group.Files[0].FileSize;
+                wastedSpace += (group.Files.Count - 1) * fileSize;
+            }
+            
+            FooterFilesChecked.Text = _totalFilesScanned.ToString();
+            FooterDuplicates.Text = totalDuplicateFiles.ToString();
+            FooterSpaceWasted.Text = FormatFileSize(wastedSpace);
+            FooterSpaceSaved.Text = FormatFileSize(_totalDeletedSize);
+        }
+
+        private void UpdateStorageIndicator()
+        {
+            if (_selectedDirectories.Count == 0 || StorageIndicator == null || StorageText == null) return;
+            
+            try
+            {
+                var driveInfo = new System.IO.DriveInfo(_selectedDirectories[0]);
+                long used = driveInfo.TotalSize - driveInfo.AvailableFreeSpace;
+                double percentage = (double)used / driveInfo.TotalSize * 100;
+                
+                // Update storage indicator width (max 200 to match Grid width)
+                double indicatorWidth = (percentage / 100) * 200;
+                StorageIndicator.Width = indicatorWidth;
+                
+                // Change color based on percentage
+                System.Windows.Media.Brush indicatorColor;
+                if (percentage < 75)
+                    indicatorColor = (System.Windows.Media.Brush)Application.Current.Resources["BlueBrush"];
+                else if (percentage < 90)
+                    indicatorColor = (System.Windows.Media.Brush)Application.Current.Resources["OrangeBrush"];
+                else
+                    indicatorColor = (System.Windows.Media.Brush)Application.Current.Resources["DangerBrush"];
+                
+                StorageIndicator.Background = indicatorColor;
+                
+                // Update storage text
+                StorageText.Text = $"{FormatFileSize(used)} used of {FormatFileSize(driveInfo.TotalSize)}";
+            }
+            catch { }
+        }
+
+        private string FormatFileSize(long bytes)
+        {
+            string[] sizes = { "B", "KB", "MB", "GB", "TB" };
+            double len = bytes;
+            int order = 0;
+            while (len >= 1024 && order < sizes.Length - 1)
+            {
+                order++;
+                len = len / 1024;
+            }
+            return $"{len:0.##} {sizes[order]}";
+        }
+
         private async void DisplayResults()
         {
             _filesRendered = 0;  // Reset batch counter
@@ -270,6 +480,24 @@ namespace DupFree.Views
             foreach (var group in _groupViewModels)
             {
                 totalFiles += group.Files.Count;
+            }
+
+            // Show/hide placeholder based on whether we have results
+            if (totalFiles == 0)
+            {
+                NoResultsPlaceholder.Visibility = Visibility.Visible;
+                ResultsDataGrid.Visibility = Visibility.Collapsed;
+                ResultsListView.Visibility = Visibility.Collapsed;
+                ResultsScrollViewer.Visibility = Visibility.Collapsed;
+                UpdateResultsCountText(0, 0);
+                UpdateSelectedCount();
+                UpdateFooterStats();
+                UpdateStorageIndicator();
+                return;
+            }
+            else
+            {
+                NoResultsPlaceholder.Visibility = Visibility.Collapsed;
             }
 
             if (_currentViewMode == "list")
@@ -294,11 +522,22 @@ namespace DupFree.Views
                         flat.Add(f);
                     }
                 }
-
+                
+                // Apply duplicate limit from settings
+                if (SettingsService.MaxDuplicatesToShow > 0 && flat.Count > SettingsService.MaxDuplicatesToShow)
+                {
+                    flat = flat.Take(SettingsService.MaxDuplicatesToShow).ToList();
+                }
+                
+                var filtered = FilterFiles(flat);
                 // Use DataGrid for proper column binding
-                ResultsDataGrid.ItemsSource = flat;
+                ResultsDataGrid.ItemsSource = filtered;
+                UpdateResultsCountText(filtered.Count, totalFiles);
+                UpdateSelectedCount();
                 
                 StatusText.Text = $"Displaying {flat.Count} files in list view";
+                UpdateFooterStats();
+                UpdateStorageIndicator();
             }
             else if (_currentViewMode == "icons" || _currentViewMode == "large_icons" || _currentViewMode == "xlarge_icons")
             {
@@ -309,19 +548,65 @@ namespace DupFree.Views
 
                 // Flatten all files
                 _currentGridFiles.Clear();
+                var allGridFiles = new List<FileItemViewModel>();
                 foreach (var group in _groupViewModels)
                 {
-                    _currentGridFiles.AddRange(group.Files);
+                    allGridFiles.AddRange(group.Files);
                 }
+                
+                // Apply duplicate limit from settings
+                if (SettingsService.MaxDuplicatesToShow > 0 && allGridFiles.Count > SettingsService.MaxDuplicatesToShow)
+                {
+                    allGridFiles = allGridFiles.Take(SettingsService.MaxDuplicatesToShow).ToList();
+                }
+                
+                _currentGridFiles.AddRange(FilterFiles(allGridFiles));
+                UpdateResultsCountText(_currentGridFiles.Count, totalFiles);
+                UpdateSelectedCount();
 
-                // Create canvas for virtualized rendering
-                var gridCanvas = new Canvas();
-                ResultsPanel.Children.Add(gridCanvas);
+                // For smaller sets, render with WrapPanel to avoid virtualization gaps
+                if (_currentGridFiles.Count <= 1000)
+                {
+                    _isVirtualGridActive = false;
+                    ResultsScrollViewer.ScrollChanged -= ResultsScrollViewer_ScrollChanged;
+                    ResultsScrollViewer.SizeChanged -= ResultsScrollViewer_SizeChanged;
 
-                _isVirtualGridActive = true;
-                SetupVirtualGrid(gridCanvas);
+                    ResultsPanel.Children.Clear();
+                    
+                    var wrap = new WrapPanel
+                    {
+                        Orientation = Orientation.Horizontal,
+                        HorizontalAlignment = HorizontalAlignment.Left
+                    };
 
-                StatusText.Text = $"Displaying {_currentGridFiles.Count} files (virtualized grid)";
+                    // Ensure WrapPanel has a constrained width for proper wrapping
+                    double wrapWidth = ResultsScrollViewer.ViewportWidth;
+                    if (double.IsNaN(wrapWidth) || wrapWidth <= 0)
+                        wrapWidth = ResultsScrollViewer.ActualWidth;
+                    if (!double.IsNaN(wrapWidth) && wrapWidth > 0)
+                        wrap.Width = wrapWidth;
+
+                    ResultsPanel.Children.Add(wrap);
+                    foreach (var file in _currentGridFiles)
+                    {
+                        wrap.Children.Add(GetViewModeCreateFunc()(file));
+                    }
+
+                    StatusText.Text = $"Displaying {_currentGridFiles.Count} files (grid)";
+                }
+                else
+                {
+
+                    ResultsPanel.Children.Clear();
+                    
+                    // Create canvas for virtualized rendering
+                    var gridCanvas = new Canvas();
+                    ResultsPanel.Children.Add(gridCanvas);
+                    _isVirtualGridActive = true;
+                    SetupVirtualGrid(gridCanvas);
+
+                    StatusText.Text = $"Displaying {_currentGridFiles.Count} files (virtualized grid)";
+                }
             }
         }
 
@@ -342,8 +627,9 @@ namespace DupFree.Views
             }
             else
             {
-                _virtualItemWidth = 156;
-                _virtualItemHeight = 196;
+                int gridSize = SettingsService.GridPictureSize;
+                _virtualItemWidth = gridSize + 56;  // size + panel padding + margins
+                _virtualItemHeight = gridSize + (SettingsService.ShowGridFilePath ? 104 : 84); // adjust based on path display setting
             }
 
             ResultsScrollViewer.ScrollChanged -= ResultsScrollViewer_ScrollChanged;
@@ -357,13 +643,27 @@ namespace DupFree.Views
 
         private void ResultsScrollViewer_SizeChanged(object sender, SizeChangedEventArgs e)
         {
-            if (!_isVirtualGridActive || ResultsPanel.Children.Count == 0)
+            if (ResultsPanel.Children.Count == 0)
                 return;
 
-            if (ResultsPanel.Children[0] is Canvas canvas)
+            if (_isVirtualGridActive)
             {
-                RecalculateVirtualGrid(canvas);
-                UpdateVirtualGrid(canvas);
+                if (ResultsPanel.Children[0] is Canvas canvas)
+                {
+                    RecalculateVirtualGrid(canvas);
+                    UpdateVirtualGrid(canvas);
+                }
+            }
+            else
+            {
+                if (ResultsPanel.Children[0] is WrapPanel wrap)
+                {
+                    double wrapWidth = ResultsScrollViewer.ViewportWidth;
+                    if (double.IsNaN(wrapWidth) || wrapWidth <= 0)
+                        wrapWidth = ResultsScrollViewer.ActualWidth;
+                    if (!double.IsNaN(wrapWidth) && wrapWidth > 0)
+                        wrap.Width = wrapWidth;
+                }
             }
         }
 
@@ -611,20 +911,35 @@ namespace DupFree.Views
 
         private FrameworkElement CreateIconView(FileItemViewModel file)
         {
+            int pictureSize = SettingsService.GridPictureSize;
+            int panelWidth = pictureSize + 24;
+            // Adjust height based on whether file path will be shown
+            int panelHeight = pictureSize + (SettingsService.ShowGridFilePath ? 72 : 52);
+            
             var panel = new StackPanel
             {
-                Width = 140,
-                Height = 180,
-                Margin = new Thickness(8),
+                Width = panelWidth,
+                Height = panelHeight,
+                Margin = new Thickness(12),
                 Cursor = System.Windows.Input.Cursors.Hand,
                 VerticalAlignment = VerticalAlignment.Top
+            };
+
+            // Add double-click handler to open file
+            panel.MouseDown += (s, e) =>
+            {
+                if (e.ClickCount == 2)
+                {
+                    OpenFile(file);
+                    e.Handled = true;
+                }
             };
 
             // Always show full path on tooltip for quick location visibility
             panel.ToolTip = file.FilePath;
 
             // Thumbnail or icon (lazy-loaded)
-            panel.Children.Add(CreatePreviewElement(file, 110));
+            panel.Children.Add(CreatePreviewElement(file, pictureSize));
 
             // Name under the image
             var nameBlock = new TextBlock
@@ -640,8 +955,8 @@ namespace DupFree.Views
             nameBlock.SetResourceReference(TextBlock.ForegroundProperty, "WindowForeground");
             panel.Children.Add(nameBlock);
 
-            // Path below name (truncated) - skip for large counts
-            if (_currentGridFiles.Count <= 2000)
+            // Path below name (truncated) - skip for large counts and if setting is disabled
+            if (SettingsService.ShowGridFilePath)
             {
                 var pathSmall = new TextBlock
                 {
@@ -855,43 +1170,83 @@ namespace DupFree.Views
                 VerticalAlignment = VerticalAlignment.Center
             };
 
+            // Bind to the thumbnail so updates propagate even if loaded later
+            var binding = new Binding("Thumbnail") { Source = file };
+            image.SetBinding(Image.SourceProperty, binding);
+
             grid.Children.Add(image);
 
-            if (file.IsPreviewable)
+            if (file.Thumbnail != null)
+                placeholder.Visibility = Visibility.Collapsed;
+
+            PropertyChangedEventManager.AddHandler(file, (_, args) =>
             {
-                if (file.Thumbnail != null)
+                if (args.PropertyName == nameof(FileItemViewModel.Thumbnail) && file.Thumbnail != null)
                 {
-                    image.Source = file.Thumbnail;
                     placeholder.Visibility = Visibility.Collapsed;
                 }
-                else
+            }, nameof(FileItemViewModel.Thumbnail));
+
+            grid.Loaded += (_, __) =>
+            {
+                if (!file.IsPreviewable)
+                    return;
+
+                if (file.Thumbnail == null)
                 {
-                    EnsureThumbnailAsync(file, image, placeholder, (int)size);
+                    EnsureThumbnailAsync(file, placeholder, (int)size);
                 }
-            }
+            };
 
             return grid;
         }
 
-        private void EnsureThumbnailAsync(FileItemViewModel file, Image image, TextBlock placeholder, int size)
+        private bool TryBeginThumbnailLoad(string filePath)
         {
-            Task.Run(() =>
+            lock (_thumbnailLoading)
             {
-                try
-                {
-                    var thumb = Services.ImagePreviewService.GetThumbnail(file.FilePath, size, size);
-                    if (thumb == null)
-                        return;
+                if (_thumbnailLoading.Contains(filePath))
+                    return false;
+                _thumbnailLoading.Add(filePath);
+                return true;
+            }
+        }
 
-                    Dispatcher.Invoke(() =>
-                    {
-                        file.Thumbnail = thumb;
-                        image.Source = thumb;
-                        placeholder.Visibility = Visibility.Collapsed;
-                    });
-                }
-                catch { }
-            });
+        private void EndThumbnailLoad(string filePath)
+        {
+            lock (_thumbnailLoading)
+            {
+                _thumbnailLoading.Remove(filePath);
+            }
+        }
+
+        private async void EnsureThumbnailAsync(FileItemViewModel file, TextBlock placeholder, int size)
+        {
+            if (!TryBeginThumbnailLoad(file.FilePath))
+                return;
+
+            try
+            {
+                await _thumbnailSemaphore.WaitAsync();
+
+                var thumb = await Task.Run(() => Services.ImagePreviewService.GetThumbnail(file.FilePath, size, size));
+                if (thumb == null)
+                    return;
+
+                Dispatcher.Invoke(() =>
+                {
+                    file.Thumbnail = thumb;
+                    placeholder.Visibility = Visibility.Collapsed;
+                });
+            }
+            catch
+            {
+            }
+            finally
+            {
+                _thumbnailSemaphore.Release();
+                EndThumbnailLoad(file.FilePath);
+            }
         }
 
         private FrameworkElement CreateListView(FileItemViewModel file)
@@ -969,6 +1324,7 @@ namespace DupFree.Views
                 // Remember current selection positions
                 int oldGridIndex = _selectedGridIndex;
                 int oldListIndex = ResultsListView?.SelectedIndex ?? -1;
+                int oldDataGridIndex = ResultsDataGrid?.SelectedIndex ?? -1;
 
                 // Remove from view models
                 foreach (var group in _groupViewModels)
@@ -976,6 +1332,7 @@ namespace DupFree.Views
                     var toRemove = group.Files.FirstOrDefault(f => f.FilePath == file.FilePath);
                     if (toRemove != null)
                     {
+                        _totalDeletedSize += toRemove.FileSize;
                         group.Files.Remove(toRemove);
                         break;
                     }
@@ -999,9 +1356,10 @@ namespace DupFree.Views
 
                 ApplySorting();
                 DisplayResults();
+                UpdateFooterStats();
 
-                // For list view, restore a sensible selection (next row or previous)
-                if (_currentViewMode == "list")
+                // For ListView, restore selection to next item (same index) or previous if at end
+                if (_currentViewMode == "list" && ResultsListView.Visibility == Visibility.Visible)
                 {
                     Dispatcher.BeginInvoke(() =>
                     {
@@ -1009,8 +1367,62 @@ namespace DupFree.Views
                         if (count == 0) return;
                         int sel = oldListIndex >= 0 ? Math.Min(oldListIndex, count - 1) : 0;
                         ResultsListView.SelectedIndex = sel;
-                        ResultsListView.ScrollIntoView(ResultsListView.SelectedItem);
-                    }, System.Windows.Threading.DispatcherPriority.Input);
+                        if (ResultsListView.SelectedItem != null)
+                        {
+                            ResultsListView.ScrollIntoView(ResultsListView.SelectedItem);
+                            // Update layout to ensure item containers are generated
+                            ResultsListView.UpdateLayout();
+                            // Get the ListViewItem and focus it
+                            var item = ResultsListView.ItemContainerGenerator.ContainerFromIndex(sel) as ListViewItem;
+                            if (item != null)
+                            {
+                                item.Focus();
+                            }
+                            else
+                            {
+                                ResultsListView.Focus();
+                            }
+                        }
+                    }, System.Windows.Threading.DispatcherPriority.Loaded);
+                }
+                // For DataGrid, restore selection to next item (same index) or previous if at end
+                else if (ResultsDataGrid.Visibility == Visibility.Visible)
+                {
+                    Dispatcher.BeginInvoke(() =>
+                    {
+                        var count = ResultsDataGrid.Items.Count;
+                        if (count == 0) return;
+                        int sel = oldDataGridIndex >= 0 ? Math.Min(oldDataGridIndex, count - 1) : 0;
+                        ResultsDataGrid.SelectedIndex = sel;
+                        if (ResultsDataGrid.SelectedItem != null)
+                        {
+                            ResultsDataGrid.ScrollIntoView(ResultsDataGrid.SelectedItem);
+                            // Update layout to ensure row containers are generated
+                            ResultsDataGrid.UpdateLayout();
+                            // Get the DataGridRow and focus it
+                            var row = ResultsDataGrid.ItemContainerGenerator.ContainerFromIndex(sel) as DataGridRow;
+                            if (row != null)
+                            {
+                                row.MoveFocus(new TraversalRequest(FocusNavigationDirection.Next));
+                            }
+                            else
+                            {
+                                ResultsDataGrid.Focus();
+                            }
+                        }
+                    }, System.Windows.Threading.DispatcherPriority.Loaded);
+                }
+                // For grid view, highlight the next item
+                else if (_currentViewMode != "list")
+                {
+                    Dispatcher.BeginInvoke(() =>
+                    {
+                        if (_selectedGridIndex >= 0)
+                        {
+                            HighlightSelectedGridFile();
+                            ResultsPanel.Focus();
+                        }
+                    }, System.Windows.Threading.DispatcherPriority.Loaded);
                 }
 
                 StatusText.Text = $"Deleted {file.FileName}";
@@ -1023,29 +1435,96 @@ namespace DupFree.Views
         }
         private void IconViewButton_Click(object sender, RoutedEventArgs e)
         {
-            if (IconViewButton.IsEnabled)
+            _currentViewMode = "icons";
+            DisplayResults();
+        }
+
+        private void RowCheckBox_PreviewMouseDown(object sender, MouseButtonEventArgs e)
+        {
+            if (sender is CheckBox checkBox)
+            {
+                var row = FindAncestor<DataGridRow>(checkBox);
+                if (row != null)
+                {
+                    row.IsSelected = !row.IsSelected;
+                    e.Handled = true;
+                }
+            }
+        }
+
+        private static T FindAncestor<T>(DependencyObject current) where T : DependencyObject
+        {
+            while (current != null)
+            {
+                if (current is T match)
+                {
+                    return match;
+                }
+                current = VisualTreeHelper.GetParent(current);
+            }
+            return null;
+        }
+
+        private void ViewToggleButton_Click(object sender, RoutedEventArgs e)
+        {
+            // Toggle between list and grid views
+            if (_currentViewMode == "list")
             {
                 _currentViewMode = "icons";
-                DisplayResults();
+                // Animate sliding indicator to right
+                AnimateViewToggle(36);
+            }
+            else
+            {
+                _currentViewMode = "list";
+                // Animate sliding indicator to left
+                AnimateViewToggle(0);
+            }
+            DisplayResults();
+        }
+
+        private void AnimateViewToggle(double targetX)
+        {
+            var button = ViewToggleButton;
+            if (button.Template.FindName("IndicatorTransform", button) is System.Windows.Media.TranslateTransform transform)
+            {
+                var animation = new System.Windows.Media.Animation.DoubleAnimation
+                {
+                    To = targetX,
+                    Duration = TimeSpan.FromMilliseconds(200),
+                    EasingFunction = new System.Windows.Media.Animation.CubicEase { EasingMode = System.Windows.Media.Animation.EasingMode.EaseInOut }
+                };
+                transform.BeginAnimation(System.Windows.Media.TranslateTransform.XProperty, animation);
+            }
+            
+            // Update icon colors
+            if (button.Template.FindName("Indicator", button) is Border indicator)
+            {
+                var grid = indicator.Parent as Grid;
+                if (grid != null && grid.Children.Count > 1 && grid.Children[1] is Grid labelGrid)
+                {
+                    if (labelGrid.Children[0] is Viewbox listBox && labelGrid.Children[1] is Viewbox gridBox)
+                    {
+                        if (listBox.Child is System.Windows.Shapes.Path listPath && gridBox.Child is System.Windows.Shapes.Path gridPath)
+                        {
+                            listPath.Fill = targetX == 0 ? System.Windows.Media.Brushes.White : (System.Windows.Media.Brush)Application.Current.Resources["ControlForeground"];
+                            gridPath.Fill = targetX == 36 ? System.Windows.Media.Brushes.White : (System.Windows.Media.Brush)Application.Current.Resources["ControlForeground"];
+                        }
+                    }
+                }
             }
         }
 
         private void LargeIconViewButton_Click(object sender, RoutedEventArgs e)
         {
-            if (LargeIconViewButton.IsEnabled)
-            {
-                _currentViewMode = "large_icons";
-                DisplayResults();
-            }
+            _currentViewMode = "large_icons";
+            DisplayResults();
         }
 
         private void XLargeIconViewButton_Click(object sender, RoutedEventArgs e)
         {
-            if (XLargeIconViewButton.IsEnabled)
-            {
-                _currentViewMode = "xlarge_icons";
-                DisplayResults();
-            }
+            _currentViewMode = "xlarge_icons";
+            DisplayResults();
         }
 
         private void ListViewButton_Click(object sender, RoutedEventArgs e)
@@ -1064,12 +1543,103 @@ namespace DupFree.Views
             }
         }
 
-        private void ThemeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+
+        private void SidebarScanButton_Click(object sender, RoutedEventArgs e)
         {
-            if (ThemeComboBox.SelectedItem is ComboBoxItem item)
+            ShowPanel(ScanPanel);
+        }
+
+        private void SidebarSettingsButton_Click(object sender, RoutedEventArgs e)
+        {
+            ShowPanel(SettingsPanel);
+            LoadSettingsValues();
+        }
+
+        private void LoadSettingsValues()
+        {
+            // Load current settings into the UI
+            MinFileSizeTextBox.Text = SettingsService.MinFileSizeMB.ToString();
+            MaxFileSizeTextBox.Text = SettingsService.MaxFileSizeMB.ToString();
+            MaxDuplicatesTextBox.Text = SettingsService.MaxDuplicatesToShow.ToString();
+            GridPictureSizeSlider.Value = SettingsService.GridPictureSize;
+            ShowGridFilePathCheckBox.IsChecked = SettingsService.ShowGridFilePath;
+        }
+
+        private void SidebarHelpButton_Click(object sender, RoutedEventArgs e)
+        {
+            ShowPanel(HelpPanel);
+        }
+
+        private void ShowPanel(FrameworkElement panel)
+        {
+            ScanPanel.Visibility = panel == ScanPanel ? Visibility.Visible : Visibility.Collapsed;
+            SettingsPanel.Visibility = panel == SettingsPanel ? Visibility.Visible : Visibility.Collapsed;
+            HelpPanel.Visibility = panel == HelpPanel ? Visibility.Visible : Visibility.Collapsed;
+
+            SidebarScanButton.IsChecked = panel == ScanPanel;
+            SidebarSettingsButton.IsChecked = panel == SettingsPanel;
+            SidebarHelpButton.IsChecked = panel == HelpPanel;
+        }
+
+        private void SelectAllButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (ResultsDataGrid.Visibility == Visibility.Visible)
             {
-                var v = item.Content.ToString().ToLower();
-                Services.SettingsService.SetTheme(v);
+                // Toggle: if all selected, deselect all; otherwise select all
+                if (ResultsDataGrid.SelectedItems.Count == ResultsDataGrid.Items.Count)
+                {
+                    ResultsDataGrid.SelectedItems.Clear();
+                }
+                else
+                {
+                    ResultsDataGrid.SelectAll();
+                }
+            }
+            else if (ResultsListView.Visibility == Visibility.Visible)
+            {
+                // Toggle: if all selected, deselect all; otherwise select all
+                if (ResultsListView.SelectedItems.Count == ResultsListView.Items.Count)
+                {
+                    ResultsListView.SelectedItems.Clear();
+                }
+                else
+                {
+                    ResultsListView.SelectAll();
+                }
+            }
+        }
+
+        private async void DeleteSelectedButton_Click(object sender, RoutedEventArgs e)
+        {
+            var toDelete = new List<FileItemViewModel>();
+
+            if (ResultsDataGrid.Visibility == Visibility.Visible)
+            {
+                toDelete = ResultsDataGrid.SelectedItems.Cast<FileItemViewModel>().ToList();
+            }
+            else if (ResultsListView.Visibility == Visibility.Visible)
+            {
+                toDelete = ResultsListView.SelectedItems.Cast<FileItemViewModel>().ToList();
+            }
+            else if (_selectedGridIndex >= 0 && _selectedGridIndex < _currentGridFiles.Count)
+            {
+                toDelete.Add(_currentGridFiles[_selectedGridIndex]);
+            }
+
+            if (toDelete.Count == 0)
+            {
+                return;
+            }
+
+            var result = MessageBox.Show($"Delete {toDelete.Count} file(s)?", "Confirm delete", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+            if (result != MessageBoxResult.Yes)
+            {
+                return;
+            }
+
+            foreach (var file in toDelete.ToList())
+            {
+                await DeleteFileAsync(file);
             }
         }
 
@@ -1107,10 +1677,17 @@ namespace DupFree.Views
         {
             if (e.Key == Key.Delete)
             {
-                if (ResultsDataGrid.SelectedItem is FileItemViewModel file)
+                var toDelete = ResultsDataGrid.SelectedItems.Cast<FileItemViewModel>().ToList();
+                if (toDelete.Count == 0)
+                {
+                    return;
+                }
+
+                foreach (var file in toDelete.ToList())
                 {
                     await DeleteFileAsync(file);
                 }
+                e.Handled = true;
             }
         }
 
@@ -1264,6 +1841,151 @@ namespace DupFree.Views
             catch
             {
                 return true;
+            }
+        }
+
+        // Settings Event Handlers
+        private void SaveFileSizeLimitsButton_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                long minSize = 0;
+                long maxSize = 0;
+                
+                if (!string.IsNullOrWhiteSpace(MinFileSizeTextBox.Text))
+                {
+                    if (!long.TryParse(MinFileSizeTextBox.Text, out minSize) || minSize < 0)
+                    {
+                        MessageBox.Show("Please enter a valid minimum file size (0 or greater).", "Invalid Input", MessageBoxButton.OK, MessageBoxImage.Warning);
+                        return;
+                    }
+                }
+                
+                if (!string.IsNullOrWhiteSpace(MaxFileSizeTextBox.Text))
+                {
+                    if (!long.TryParse(MaxFileSizeTextBox.Text, out maxSize) || maxSize < 0)
+                    {
+                        MessageBox.Show("Please enter a valid maximum file size (0 or greater).", "Invalid Input", MessageBoxButton.OK, MessageBoxImage.Warning);
+                        return;
+                    }
+                }
+                
+                if (maxSize > 0 && minSize > maxSize)
+                {
+                    MessageBox.Show("Minimum file size cannot be greater than maximum file size.", "Invalid Input", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
+                }
+                
+                SettingsService.SetMinFileSizeMB(minSize);
+                SettingsService.SetMaxFileSizeMB(maxSize);
+                SettingsService.SaveToFile();
+                
+                MessageBox.Show($"File size limits applied successfully.\n\nMinimum: {(minSize == 0 ? "No limit" : minSize + " MB")}\nMaximum: {(maxSize == 0 ? "No limit" : maxSize + " MB")}", 
+                    "Settings Saved", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Error saving file size limits: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        private void SaveDuplicateLimitButton_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                int maxDuplicates = 0;
+                
+                if (!string.IsNullOrWhiteSpace(MaxDuplicatesTextBox.Text))
+                {
+                    if (!int.TryParse(MaxDuplicatesTextBox.Text, out maxDuplicates) || maxDuplicates < 0)
+                    {
+                        MessageBox.Show("Please enter a valid number (0 or greater). 0 means no limit.", "Invalid Input", MessageBoxButton.OK, MessageBoxImage.Warning);
+                        return;
+                    }
+                }
+                
+                SettingsService.SetMaxDuplicatesToShow(maxDuplicates);
+                SettingsService.SaveToFile();
+                
+                MessageBox.Show($"Duplicate limit applied successfully: {(maxDuplicates == 0 ? "No limit" : maxDuplicates.ToString())}", 
+                    "Settings Saved", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Error saving duplicate limit: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        private void GridPictureSizeSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (GridPictureSizeValueText != null && GridSizePreviewBorder != null)
+            {
+                int size = (int)e.NewValue;
+                GridPictureSizeValueText.Text = $"{size} px";
+                GridSizePreviewBorder.Width = size;
+                GridSizePreviewBorder.Height = size;
+            }
+        }
+
+        private void SaveGridSizeButton_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                int size = (int)GridPictureSizeSlider.Value;
+                SettingsService.SetGridPictureSize(size);
+                SettingsService.SaveToFile();
+                
+                // Update the virtual grid dimensions
+                _virtualItemWidth = size + 56;  // size + panel padding + margins
+                _virtualItemHeight = size + 104; // size + panel padding + text height + margins
+                
+                // If currently in grid view, refresh the display
+                if (_currentViewMode != "list" && _groupViewModels != null && _groupViewModels.Count > 0)
+                {
+                    MessageBox.Show($"Grid picture size set to {size}px. Refreshing grid view...", 
+                        "Settings Saved", MessageBoxButton.OK, MessageBoxImage.Information);
+                    DisplayResults();
+                }
+                else
+                {
+                    MessageBox.Show($"Grid picture size set to {size}px. The new size will be applied when you switch to grid view.", 
+                        "Settings Saved", MessageBoxButton.OK, MessageBoxImage.Information);
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Error saving grid size: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        private void SaveGridFilePathButton_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                bool showPath = ShowGridFilePathCheckBox.IsChecked ?? true;
+                SettingsService.SetShowGridFilePath(showPath);
+                SettingsService.SaveToFile();
+
+                // Update virtual item height based on setting
+                int gridSize = SettingsService.GridPictureSize;
+                _virtualItemHeight = gridSize + (showPath ? 104 : 84);
+
+                // If currently in grid view, refresh the display
+                if (_currentViewMode != "list" && _groupViewModels != null && _groupViewModels.Count > 0)
+                {
+                    DisplayResults();
+                    MessageBox.Show(showPath ? "File path display enabled. Refreshing grid view..." : "File path display disabled. Refreshing grid view...",
+                        "Settings Saved", MessageBoxButton.OK, MessageBoxImage.Information);
+                }
+                else
+                {
+                    MessageBox.Show(showPath ? "File path display enabled. The setting will be applied when you switch to grid view." : "File path display disabled. The setting will be applied when you switch to grid view.",
+                        "Settings Saved", MessageBoxButton.OK, MessageBoxImage.Information);
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Error saving setting: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
     }

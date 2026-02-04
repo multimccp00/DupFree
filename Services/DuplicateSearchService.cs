@@ -19,6 +19,7 @@ namespace DupFree.Services
     public class DuplicateSearchService
     {
         private List<DuplicateFileGroup> _duplicates = new();
+        public int TotalFilesScanned { get; private set; }
         public event Action<string> OnStatusChanged;
         public event Action<int> OnProgressChanged;
 
@@ -31,6 +32,7 @@ namespace DupFree.Services
         private List<DuplicateFileGroup> FindDuplicatesInternal(List<string> directories, IProgress<(int current, int total)> progress = null, int? maxFilesToProcess = null, System.Threading.CancellationToken cancellationToken = default)
         {
             _duplicates.Clear();
+            TotalFilesScanned = 0;
             
             OnStatusChanged?.Invoke("Collecting files...");
 
@@ -66,6 +68,7 @@ namespace DupFree.Services
 
             var fileList = allFiles.ToList();
             int totalFiles = fileList.Count;
+            TotalFilesScanned = totalFiles;
             OnStatusChanged?.Invoke($"Found {totalFiles} total files. Filtering...");
 
             // Diagnostic: write collection stats
