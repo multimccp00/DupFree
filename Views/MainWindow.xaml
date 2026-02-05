@@ -4,15 +4,17 @@
     xmlns:sys="clr-namespace:System;assembly=mscorlib"
     Title="DupFree - Duplicate File Finder" Height="900" Width="1400"
     Background="{DynamicResource AppBackground}"
-    Foreground="{DynamicResource WindowForeground}">
+    Foreground="{DynamicResource WindowForeground}"
+    PreviewKeyDown="MainWindow_PreviewKeyDown">
     <Grid>
         <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="256" />
+            <ColumnDefinition Width="Auto" />
             <ColumnDefinition Width="*" />
         </Grid.ColumnDefinitions>
 
         <!-- Sidebar -->
-        <Border Grid.Column="0" Background="{DynamicResource SidebarBackground}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,0,1,0">
+        <Grid Grid.Column="0" x:Name="SidebarContainer" Width="256" Background="Transparent" ClipToBounds="False" Panel.ZIndex="100">
+            <Border x:Name="SidebarContent" Background="{DynamicResource SidebarBackground}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,0,1,0">
             <DockPanel LastChildFill="True">
                 <!-- Storage section docked to bottom -->
                 <Border DockPanel.Dock="Bottom" Background="{DynamicResource StorageBackground}" Padding="16" Height="110" CornerRadius="8" Margin="16">
@@ -38,16 +40,28 @@
                         </StackPanel>
                     </StackPanel>
 
+                    <ToggleButton Name="BrowseButton" Click="BrowseButton_Click" Style="{StaticResource SidebarToggle}" Margin="0,0,0,8" Height="48" Padding="16,12" VerticalContentAlignment="Center">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="📁" Margin="0,0,12,0" FontSize="16" VerticalAlignment="Center" />
+                            <TextBlock Text="Browse" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </ToggleButton>
                     <ToggleButton Name="SidebarScanButton" Click="SidebarScanButton_Click" Style="{StaticResource SidebarToggle}" IsChecked="True" Margin="0,0,0,8" Height="48" Padding="16,12" VerticalContentAlignment="Center">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="🔍" Margin="0,0,12,0" FontSize="16" VerticalAlignment="Center" />
                             <TextBlock Text="Scanned Files" FontWeight="Medium" VerticalAlignment="Center" />
                         </StackPanel>
                     </ToggleButton>
-                    <ToggleButton Name="BrowseButton" Click="BrowseButton_Click" Style="{StaticResource SidebarToggle}" Margin="0,0,0,8" Height="48" Padding="16,12" VerticalContentAlignment="Center">
+                    <ToggleButton Name="SidebarSimilarImagesButton" Click="SidebarSimilarImagesButton_Click" Style="{StaticResource SidebarToggle}" Margin="0,0,0,8" Height="48" Padding="16,12" VerticalContentAlignment="Center">
                         <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="📁" Margin="0,0,12,0" FontSize="16" VerticalAlignment="Center" />
-                            <TextBlock Text="Browse" VerticalAlignment="Center" />
+                            <TextBlock Text="🖼" Margin="0,0,12,0" FontSize="16" VerticalAlignment="Center" />
+                            <TextBlock Text="Similar Images" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </ToggleButton>
+                    <ToggleButton Name="SidebarRecycleBinButton" Click="SidebarRecycleBinButton_Click" Style="{StaticResource SidebarToggle}" Margin="0,0,0,8" Height="48" Padding="16,12" VerticalContentAlignment="Center">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="🗑" Margin="0,0,12,0" FontSize="16" VerticalAlignment="Center" />
+                            <TextBlock Text="Recycle Bin" VerticalAlignment="Center" />
                         </StackPanel>
                     </ToggleButton>
                     <ToggleButton Name="SidebarSettingsButton" Click="SidebarSettingsButton_Click" Style="{StaticResource SidebarToggle}" Margin="0,0,0,8" Height="48" Padding="16,12" VerticalContentAlignment="Center">
@@ -64,7 +78,24 @@
                     </ToggleButton>
                 </StackPanel>
             </DockPanel>
-        </Border>
+            </Border>
+            <Button x:Name="SidebarCollapseButton" Click="SidebarCollapseButton_Click" Width="24" Height="80" VerticalAlignment="Center" HorizontalAlignment="Right" Background="{DynamicResource ControlBackground}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1,1,1,1" Cursor="Hand" ToolTip="Collapse sidebar" Padding="0" Margin="0,0,-24,0" Panel.ZIndex="1000">
+                <Button.Resources>
+                    <Style TargetType="Button">
+                        <Setter Property="Template">
+                            <Setter.Value>
+                                <ControlTemplate TargetType="Button">
+                                    <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="0,12,12,0" Padding="{TemplateBinding Padding}">
+                                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                    </Border>
+                                </ControlTemplate>
+                            </Setter.Value>
+                        </Setter>
+                    </Style>
+                </Button.Resources>
+                <TextBlock Text="‹" FontSize="20" FontWeight="Bold" Foreground="White" VerticalAlignment="Center" HorizontalAlignment="Center" />
+            </Button>
+        </Grid>
 
         <!-- Main Content -->
         <Grid Grid.Column="1" Background="Transparent">
@@ -76,7 +107,7 @@
             </Grid.RowDefinitions>
 
             <!-- Top Filters -->
-            <Border Grid.Row="0" Background="{DynamicResource TopBarBackground}" Margin="0" Padding="16" HorizontalAlignment="Stretch">
+            <Border x:Name="TopFiltersBar" Grid.Row="0" Background="{DynamicResource TopBarBackground}" Margin="0" Padding="16" HorizontalAlignment="Stretch">
                 <Grid Background="Transparent" HorizontalAlignment="Stretch">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto" />
@@ -134,17 +165,29 @@
             </Border>
 
             <!-- Actions & Status -->
-            <Border Grid.Row="1" Background="{DynamicResource ActionBarBackground}" Margin="0" Padding="16,12" HorizontalAlignment="Stretch">
+            <Border x:Name="ActionBar" Grid.Row="1" Background="{DynamicResource ActionBarBackground}" Margin="0" Padding="16,12" HorizontalAlignment="Stretch">
                 <Grid Background="Transparent">
                     <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
 
-                    <Button Name="SelectAllButton" Click="SelectAllButton_Click" Padding="8,4" Margin="0,0,8,0" Style="{StaticResource SecondaryButton}">Select All</Button>
-                    <Button Grid.Column="1" Name="DeleteSelectedButton" Click="DeleteSelectedButton_Click" Padding="8,4" Style="{StaticResource DangerButton}">Delete Selected (0)</Button>
-                    <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                    <Button Name="SelectAllButton" Click="SelectAllButton_Click" Padding="8,4" Margin="0,0,8,0" Style="{StaticResource SecondaryButton}" VerticalAlignment="Center" Height="32">Select All</Button>
+                    <Button Grid.Column="1" Name="DeleteSelectedButton" Click="DeleteSelectedButton_Click" Padding="8,4" Margin="0,0,8,0" Style="{StaticResource DangerButton}" VerticalAlignment="Center" Height="32">Delete Selected (0)</Button>
+                    <StackPanel Grid.Column="2" Orientation="Horizontal" x:Name="RecycleBinControls" Visibility="Collapsed" VerticalAlignment="Center">
+                        <Button Name="ClearBinButton" Click="ClearBinButton_Click" Padding="8,4" Margin="0,0,12,0" Style="{StaticResource DangerButton}" Height="32">Clear Bin</Button>
+                        <TextBlock x:Name="RecycleBinCountText" Text="(0 files)" Foreground="{DynamicResource MutedForeground}" VerticalAlignment="Center" FontSize="12" />
+                    </StackPanel>
+                    
+                    <!-- Progress Bar (visible during scan) -->
+                    <StackPanel Grid.Column="3" x:Name="ProgressPanel" Orientation="Vertical" HorizontalAlignment="Stretch" VerticalAlignment="Center" Margin="16,0,16,0" Visibility="Collapsed">
+                        <TextBlock x:Name="ProgressStatusText" Text="Scanning..." Foreground="{DynamicResource ControlForeground}" FontSize="11" Margin="0,0,0,4" />
+                        <ProgressBar x:Name="ScanProgressBar" Height="8" Background="#374151" Foreground="{DynamicResource ScanButtonBrush}" BorderThickness="0" />
+                    </StackPanel>
+                    
+                    <StackPanel Grid.Column="3" x:Name="ViewControlPanel" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
                     <Button Name="ViewToggleButton" Click="ViewToggleButton_Click" Padding="4,4" VerticalAlignment="Center" Background="{DynamicResource ControlBackground}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" Cursor="Hand">
                         <Button.Template>
                             <ControlTemplate TargetType="Button">
@@ -337,6 +380,16 @@
                                         </Button>
                                     </StackPanel>
                                 </Border>
+
+                                <!-- Delete Confirmation Section -->
+                                <Border Background="{DynamicResource CardBackground}" CornerRadius="8" Padding="20" Margin="0,0,0,16">
+                                    <StackPanel>
+                                        <TextBlock Text="Delete Confirmation" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,12" />
+                                        <TextBlock Text="Ask for confirmation before deleting files" Foreground="{DynamicResource MutedForeground}" Margin="0,0,0,16" />
+
+                                        <CheckBox Name="ConfirmDeleteCheckBox" Content="Show delete confirmation dialog" Style="{StaticResource SettingsCheckBox}" Checked="ConfirmDeleteCheckBox_Changed" Unchecked="ConfirmDeleteCheckBox_Changed" />
+                                    </StackPanel>
+                                </Border>
                                 
                                 <!-- Grid View Picture Size Section -->
                                 <Border Background="{DynamicResource CardBackground}" CornerRadius="8" Padding="20" Margin="0,0,0,16">
@@ -461,10 +514,87 @@
                         </StackPanel>
                     </ScrollViewer>
                 </Grid>
+
+                <!-- Recycle Bin Panel -->
+                <Grid Name="RecycleBinPanel" Visibility="Collapsed">
+                    <Border Background="{DynamicResource AppBackground}" CornerRadius="8" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" Padding="0">
+                        <Grid>
+                            <!-- List View (DataGrid) -->
+                            <DataGrid Name="RecycleBinDataGrid" 
+                                      AutoGenerateColumns="False" 
+                                      IsReadOnly="True"
+                                      SelectionMode="Extended"
+                                      CanUserResizeColumns="True"
+                                      CanUserSortColumns="False"
+                                      HeadersVisibility="Column"
+                                      GridLinesVisibility="None"
+                                      Background="{DynamicResource AppBackground}"
+                                      Foreground="{DynamicResource WindowForeground}"
+                                      BorderThickness="0"
+                                      RowBackground="{DynamicResource AppBackground}"
+                                      AlternatingRowBackground="{DynamicResource CardBackground}"
+                                      Margin="0"
+                                      Visibility="Visible"
+                                      SelectionChanged="RecycleBinDataGrid_SelectionChanged">
+                                <DataGrid.Columns>
+                                    <DataGridTemplateColumn Width="40">
+                                        <DataGridTemplateColumn.Header>
+                                            <TextBlock Text="" />
+                                        </DataGridTemplateColumn.Header>
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <CheckBox Style="{StaticResource GridCheckBox}"
+                                                          IsChecked="{Binding RelativeSource={RelativeSource AncestorType=DataGridRow}, Path=IsSelected, Mode=TwoWay}"
+                                                          PreviewMouseDown="RowCheckBox_PreviewMouseDown" />
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTextColumn Header="File Name" Binding="{Binding FileName}" Width="*" MinWidth="200" />
+                                    <DataGridTextColumn Header="Original Path" Binding="{Binding FilePath}" Width="2*" MinWidth="300" />
+                                    <DataGridTextColumn Header="Size" Binding="{Binding FileSizeFormatted}" Width="100" />
+                                    <DataGridTextColumn Header="Deleted" Binding="{Binding DeletedTime}" Width="150" />
+                                </DataGrid.Columns>
+                                <DataGrid.ContextMenu>
+                                    <ContextMenu>
+                                        <MenuItem Header="Restore" Click="RestoreFileMenuItem_Click" />
+                                        <MenuItem Header="Remove from Bin" Click="RemoveFromBinMenuItem_Click" />
+                                    </ContextMenu>
+                                </DataGrid.ContextMenu>
+                            </DataGrid>
+                            
+                            <!-- Grid View (ScrollViewer with WrapPanel) -->
+                            <ScrollViewer Name="RecycleBinScrollViewer" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Visibility="Collapsed" PreviewKeyDown="RecycleBinScrollViewer_PreviewKeyDown">
+                                <StackPanel Name="RecycleBinResultsPanel" Background="Transparent" Margin="8" />
+                            </ScrollViewer>
+                            
+                            <!-- Empty State Placeholder -->
+                            <Grid x:Name="NoRecycleBinPlaceholder" IsHitTestVisible="False">
+                                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Opacity="0.75">
+                                    <Border Width="44" Height="44" CornerRadius="22" Background="{DynamicResource ControlBackground}" Margin="0,0,0,8">
+                                        <TextBlock Text="🗑" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                    </Border>
+                                    <TextBlock Text="Recycle bin is empty" HorizontalAlignment="Center" FontWeight="SemiBold" />
+                                    <TextBlock Text="Deleted files will appear here" HorizontalAlignment="Center" Foreground="{DynamicResource MutedForeground}" FontSize="12" />
+                                </StackPanel>
+                            </Grid>
+                        </Grid>
+                    </Border>
+                </Grid>
+
+                <!-- Similar Images Panel (Placeholder) -->
+                <Grid Name="SimilarImagesPanel" Visibility="Collapsed">
+                    <Border Background="{DynamicResource CardBackground}" CornerRadius="12" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" Padding="40">
+                        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                            <TextBlock Text="🖼" FontSize="48" HorizontalAlignment="Center" Margin="0,0,0,16" />
+                            <TextBlock Text="Similar Images" FontSize="20" FontWeight="Bold" HorizontalAlignment="Center" Margin="0,0,0,8" />
+                            <TextBlock Text="Coming soon..." Foreground="{DynamicResource MutedForeground}" HorizontalAlignment="Center" />
+                        </StackPanel>
+                    </Border>
+                </Grid>
             </Grid>
 
             <!-- Footer Cards -->
-            <Grid Grid.Row="3">
+            <Grid x:Name="FooterStats" Grid.Row="3">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="*" />

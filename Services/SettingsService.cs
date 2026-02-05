@@ -32,6 +32,9 @@ namespace DupFree.Services
         // Grid view show file path setting
         public static bool ShowGridFilePath { get; private set; } = true;
 
+        // Confirm delete dialog
+        public static bool ConfirmDelete { get; private set; } = true;
+
         public static event Action OnSettingsChanged;
 
         public static void SetSizeUnit(SizeUnit u)
@@ -75,6 +78,12 @@ namespace DupFree.Services
             ShowGridFilePath = show;
             OnSettingsChanged?.Invoke();
         }
+
+        public static void SetConfirmDelete(bool confirm)
+        {
+            ConfirmDelete = confirm;
+            OnSettingsChanged?.Invoke();
+        }
         
         private static string GetSettingsFilePath()
         {
@@ -97,7 +106,8 @@ namespace DupFree.Services
                     MaxFileSizeMB,
                     MaxDuplicatesToShow,
                     GridPictureSize,
-                    ShowGridFilePath
+                    ShowGridFilePath,
+                    ConfirmDelete
                 };
                 
                 var json = JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true });
@@ -141,6 +151,9 @@ namespace DupFree.Services
                     
                 if (root.TryGetProperty("ShowGridFilePath", out var showPath))
                     ShowGridFilePath = showPath.GetBoolean();
+
+                if (root.TryGetProperty("ConfirmDelete", out var confirmDelete))
+                    ConfirmDelete = confirmDelete.GetBoolean();
             }
             catch { /* Silently fail if settings can't be loaded */ }
         }
