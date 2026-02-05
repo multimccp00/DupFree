@@ -337,6 +337,10 @@ namespace DupFree.Views
                 _selectedDirectories.Add(dialog.SelectedPath);
                 ScanButton.IsEnabled = true;
                 StatusText.Text = $"Selected: {dialog.SelectedPath}";
+                
+                // Pass directories to similar images panel
+                SimilarImagesPanelControl.SetDirectories(_selectedDirectories);
+                
                 // Uncheck the browse button after selection
                 BrowseButton.IsChecked = false;
 
@@ -2001,7 +2005,12 @@ namespace DupFree.Views
 
         private void SidebarSimilarImagesButton_Click(object sender, RoutedEventArgs e)
         {
-            ShowPanel(SimilarImagesPanel);
+            ShowPanel(SimilarImagesPanelContainer);
+            // Pass the selected directories to the similar images panel
+            if (_selectedDirectories != null && _selectedDirectories.Count > 0)
+            {
+                SimilarImagesPanelControl.SetDirectories(_selectedDirectories);
+            }
         }
 
         private void SidebarSettingsButton_Click(object sender, RoutedEventArgs e)
@@ -2042,9 +2051,9 @@ namespace DupFree.Views
             SettingsPanel.Visibility = panel == SettingsPanel ? Visibility.Visible : Visibility.Collapsed;
             HelpPanel.Visibility = panel == HelpPanel ? Visibility.Visible : Visibility.Collapsed;
             RecycleBinPanel.Visibility = panel == RecycleBinPanel ? Visibility.Visible : Visibility.Collapsed;
-            SimilarImagesPanel.Visibility = panel == SimilarImagesPanel ? Visibility.Visible : Visibility.Collapsed;
+            SimilarImagesPanelContainer.Visibility = panel == SimilarImagesPanelContainer ? Visibility.Visible : Visibility.Collapsed;
 
-            // Show top bars only for ScanPanel and RecycleBinPanel
+            // Show top bars only for ScanPanel and RecycleBinPanel (not for similar images)
             bool showTopBars = (panel == ScanPanel || panel == RecycleBinPanel);
             TopFiltersBar.Visibility = showTopBars ? Visibility.Visible : Visibility.Collapsed;
             ActionBar.Visibility = showTopBars ? Visibility.Visible : Visibility.Collapsed;
@@ -2077,7 +2086,7 @@ namespace DupFree.Views
 
             SidebarScanButton.IsChecked = panel == ScanPanel;
             SidebarRecycleBinButton.IsChecked = panel == RecycleBinPanel;
-            SidebarSimilarImagesButton.IsChecked = panel == SimilarImagesPanel;
+            SidebarSimilarImagesButton.IsChecked = panel == SimilarImagesPanelContainer;
             SidebarSettingsButton.IsChecked = panel == SettingsPanel;
             SidebarHelpButton.IsChecked = panel == HelpPanel;
         }

@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.IO;
 using System.ComponentModel;
 using System.Windows.Media.Imaging;
+using System.Linq;
 
 namespace DupFree.Models
 {
@@ -10,6 +12,7 @@ namespace DupFree.Models
     {
         private BitmapImage _thumbnail;
         private string _sizeFormatted;
+        private bool _isSelected;
 
         public string FilePath { get; set; }
         public string FileName { get; set; }
@@ -43,7 +46,19 @@ namespace DupFree.Models
             }
         }
 
-        public bool IsSelected { get; set; }
+        public bool IsSelected
+        {
+            get => _isSelected;
+            set
+            {
+                if (_isSelected != value)
+                {
+                    _isSelected = value;
+                    OnPropertyChanged(nameof(IsSelected));
+                }
+            }
+        }
+
         public bool IsPreviewable => Services.ImagePreviewService.IsPreviewableImage(FilePath);
         public int DupCount { get; set; }
         public string DupSpace { get; set; }
@@ -108,6 +123,52 @@ namespace DupFree.Models
         public string DupSpace => TotalWastedSpaceFormatted;
         public string RepresentativeName => Files != null && Files.Count > 0 ? Files[0].FileName : string.Empty;
         public string RepresentativePath => Files != null && Files.Count > 0 ? Files[0].FilePath : string.Empty;
+
+        public event PropertyChangedEventHandler PropertyChanged;
+
+        protected void OnPropertyChanged(string propertyName)
+        {
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+        }
+    }
+
+    public class SimilarImageGroupViewModel : INotifyPropertyChanged
+    {
+        private bool _isExpanded = true;
+        private bool _isSelected = false;
+
+        public string GroupId { get; set; }
+        public ObservableCollection<FileItemViewModel> Images { get; set; } = new();
+        public double SimilarityScore { get; set; }
+
+        public bool IsExpanded
+        {
+            get => _isExpanded;
+            set
+            {
+                if (_isExpanded != value)
+                {
+                    _isExpanded = value;
+                    OnPropertyChanged(nameof(IsExpanded));
+                }
+            }
+        }
+
+        public bool IsSelected
+        {
+            get => _isSelected;
+            set
+            {
+                if (_isSelected != value)
+                {
+                    _isSelected = value;
+                    OnPropertyChanged(nameof(IsSelected));
+                }
+            }
+        }
+
+        public int ImageCount => Images?.Count ?? 0;
+        public string SimilarityPercentage => $"{SimilarityScore:P0}";
 
         public event PropertyChangedEventHandler PropertyChanged;
 

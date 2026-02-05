@@ -11,6 +11,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Magick.NET-Q16-AnyCPU" Version="14.10.2" />
     <PackageReference Include="System.Drawing.Common" Version="8.0.0" />
     <PackageReference Include="Ookii.Dialogs.Wpf" Version="2.1.0" />
   </ItemGroup>
