@@ -582,12 +582,11 @@
                     </Border>
                 </Grid>
 
-                <!-- Similar Images Panel -->
-                <Grid Name="SimilarImagesPanelContainer" Visibility="Collapsed">
-                    <Border Background="{DynamicResource AppBackground}" CornerRadius="8" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" Padding="0">
-                        <local:SimilarImagesPanel x:Name="SimilarImagesPanelControl" />
-                    </Border>
-                </Grid>
+            </Grid>
+
+            <!-- Similar Images Panel (spans rows 0-2, same level as top bars) -->
+            <Grid Name="SimilarImagesPanelContainer" Grid.Row="0" Grid.RowSpan="3" Visibility="Collapsed">
+                <local:SimilarImagesPanel x:Name="SimilarImagesPanelControl" />
             </Grid>
 
             <!-- Footer Cards -->

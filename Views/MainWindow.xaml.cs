@@ -1796,7 +1796,7 @@ namespace DupFree.Views
                 // For ListView, restore selection to next item (same index) or previous if at end
                 if (_currentViewMode == "list" && ResultsListView.Visibility == Visibility.Visible)
                 {
-                    Dispatcher.BeginInvoke(() =>
+                    _ = Dispatcher.BeginInvoke(() =>
                     {
                         var count = ResultsListView.Items.Count;
                         if (count == 0) return;
@@ -1823,7 +1823,7 @@ namespace DupFree.Views
                 // For DataGrid, restore selection to next item (same index) or previous if at end
                 else if (ResultsDataGrid.Visibility == Visibility.Visible)
                 {
-                    Dispatcher.BeginInvoke(() =>
+                    _ = Dispatcher.BeginInvoke(() =>
                     {
                         var count = ResultsDataGrid.Items.Count;
                         if (count == 0) return;
@@ -1850,7 +1850,7 @@ namespace DupFree.Views
                 // For grid view, highlight the next item
                 else if (_currentViewMode != "list")
                 {
-                    Dispatcher.BeginInvoke(() =>
+                    _ = Dispatcher.BeginInvoke(() =>
                     {
                         if (_selectedGridIndex >= 0)
                         {

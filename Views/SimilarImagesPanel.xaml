@@ -10,49 +10,65 @@
         </Grid.ColumnDefinitions>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
         <!-- Control Bar -->
-        <Border Grid.Row="0" Grid.ColumnSpan="2" Background="{DynamicResource ControlBackground}" Padding="16" Margin="0,0,0,8">
-            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                <!-- Scan Button -->
-                <Button Name="ScanSimilarButton" Click="ScanSimilarButton_Click" Style="{StaticResource PrimaryButton}" Padding="20,8" Height="40">
-                    Scan for Similar
-                </Button>
+        <Border Grid.Row="0" Grid.ColumnSpan="2" Background="{DynamicResource TopBarBackground}" Padding="16" Margin="0" HorizontalAlignment="Stretch">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <!-- Scan Button -->
+                    <Button Name="ScanSimilarButton" Click="ScanSimilarButton_Click" Style="{StaticResource PrimaryButton}" Padding="20,8" Height="40">
+                        Scan for Similar
+                    </Button>
 
-                <!-- Closest Pairs Button -->
-                <Button Name="ClosestPairsButton" Click="ClosestPairsButton_Click" Style="{StaticResource SecondaryButton}" Padding="16,8" Height="40" Margin="8,0,0,0">
-                    Closest Pairs
-                </Button>
-                
-                <!-- Max Distance Slider (Optional fine-tuning) -->
-                <TextBlock Text="Similarity:" Foreground="{DynamicResource ControlForeground}" Margin="24,0,8,0" VerticalAlignment="Center" />
-                <Slider Name="MaxDistanceSlider" Minimum="85" Maximum="99" Value="92" Width="150" VerticalAlignment="Center" Margin="0,0,8,0" ValueChanged="MaxDistanceSlider_ValueChanged" ToolTip="Minimum SSIM similarity to group images. Higher = stricter matching." IsSnapToTickEnabled="True" TickFrequency="1" />
-                <TextBlock Name="MaxDistanceText" Text="92%" Foreground="{DynamicResource ControlForeground}" Width="35" VerticalAlignment="Center" Margin="0,0,16,0" />
-                
-                <!-- Status Text -->
-                <TextBlock Name="StatusText" Text="" Foreground="{DynamicResource MutedForeground}" FontSize="12" VerticalAlignment="Center" Margin="16,0,0,0" TextWrapping="Wrap" MaxWidth="200" />
-
-                <!-- Auto Select Button -->
-                <Button Name="AutoSelectButton" Click="AutoSelectButton_Click" Style="{StaticResource SecondaryButton}" Padding="20,8" Height="40" Margin="8,0,0,0">
-                    Auto-Select
-                </Button>
-
-                <!-- Settings Button -->
-                <Button Name="SettingsButton" Click="SettingsButton_Click" Style="{StaticResource SecondaryButton}" Padding="12,8" Height="40" Margin="8,0,0,0" ToolTip="Auto-select settings">
-                    ⚙
-                </Button>
+                    <!-- Max Distance Slider -->
+                    <TextBlock Text="Similarity:" Foreground="{DynamicResource ControlForeground}" Margin="24,0,8,0" VerticalAlignment="Center" />
+                    <Slider Name="MaxDistanceSlider" Minimum="85" Maximum="99" Value="92" Width="150" VerticalAlignment="Center" Margin="0,0,8,0" ValueChanged="MaxDistanceSlider_ValueChanged" ToolTip="Minimum SSIM similarity to group images. Higher = stricter matching." IsSnapToTickEnabled="True" TickFrequency="1" />
+                    <TextBlock Name="MaxDistanceText" Text="92%" Foreground="{DynamicResource ControlForeground}" Width="35" VerticalAlignment="Center" Margin="0,0,16,0" />
+                    
+                    <!-- Status Text -->
+                    <TextBlock Name="StatusText" Text="" Foreground="{DynamicResource MutedForeground}" FontSize="12" VerticalAlignment="Center" Margin="16,0,0,0" TextWrapping="Wrap" MaxWidth="240" />
+                </StackPanel>
 
                 <!-- Delete Button -->
-                <Button Name="DeleteSimilarSelectedButton" Click="DeleteSimilarSelectedButton_Click" Style="{StaticResource DangerButton}" Padding="20,8" Height="40" Margin="0,0,0,0" HorizontalAlignment="Right">
+                <Button Name="DeleteSimilarSelectedButton" Grid.Column="1" Click="DeleteSimilarSelectedButton_Click" Style="{StaticResource DangerButton}" Padding="20,8" Height="40" Margin="8,0,0,0" HorizontalAlignment="Right">
                     Delete
                 </Button>
-            </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- Auto-Select Settings Bar -->
+        <Border Grid.Row="1" Grid.ColumnSpan="2" Background="{DynamicResource ActionBarBackground}" Padding="16,12" Margin="0" HorizontalAlignment="Stretch">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+
+                <!-- Auto-Select button (left) -->
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <Button Name="AutoSelectButton" Click="AutoSelectButton_Click" Style="{StaticResource SecondaryButton}" Padding="18,8" Height="36" Margin="0,0,12,0">
+                        Auto-Select
+                    </Button>
+                </StackPanel>
+
+                <!-- Inline settings (right) -->
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Left">
+                    <CheckBox Name="AutoSelectKeepUncompressedCheckBox" Content="Uncompressed filetype" Margin="0,0,12,0" Style="{StaticResource SettingsCheckBox}" Checked="AutoSelectSettingsCheckBox_Changed" Unchecked="AutoSelectSettingsCheckBox_Changed" />
+                    <CheckBox Name="AutoSelectKeepHigherResolutionCheckBox" Content="Lower resolution" Margin="0,0,12,0" Style="{StaticResource SettingsCheckBox}" Checked="AutoSelectSettingsCheckBox_Changed" Unchecked="AutoSelectSettingsCheckBox_Changed" />
+                    <CheckBox Name="AutoSelectKeepLargerFilesizeCheckBox" Content="Smaller filesize" Margin="0,0,12,0" Style="{StaticResource SettingsCheckBox}" Checked="AutoSelectSettingsCheckBox_Changed" Unchecked="AutoSelectSettingsCheckBox_Changed" />
+                </StackPanel>
+            </Grid>
         </Border>
 
         <!-- Thumbnails Grid (Left) -->
-        <Border Grid.Row="1" Grid.Column="0" Background="{DynamicResource AppBackground}" CornerRadius="8" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" Padding="8">
+        <Border Grid.Row="2" Grid.Column="0" Background="{DynamicResource AppBackground}" CornerRadius="8" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" Padding="8" Margin="16,8,0,8">
             <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                 <ItemsControl Name="SimilarGroupsItemsControl" ItemsSource="{Binding}">
                     <ItemsControl.ItemsPanel>
@@ -132,7 +148,7 @@
         </Border>
 
         <!-- Empty State (Left) -->
-        <Grid Name="NoSimilarPlaceholder" Grid.Row="1" Grid.Column="0" IsHitTestVisible="False" Background="{DynamicResource AppBackground}">
+        <Grid Name="NoSimilarPlaceholder" Grid.Row="2" Grid.Column="0" IsHitTestVisible="False" Background="{DynamicResource AppBackground}" Margin="16,8,0,8">
             <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Opacity="0.75">
                 <Border Width="44" Height="44" CornerRadius="22" Background="{DynamicResource ControlBackground}" Margin="0,0,0,8">
                     <TextBlock Text="🖼" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="24" />
@@ -143,7 +159,7 @@
         </Grid>
 
         <!-- Preview Pane (Right) -->
-        <Border Grid.Row="1" Grid.Column="1" Background="{DynamicResource CardBackground}" CornerRadius="8" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" Padding="12" Margin="0,0,0,0">
+        <Border Grid.Row="2" Grid.Column="1" Background="{DynamicResource CardBackground}" CornerRadius="8" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" Padding="12" Margin="8,8,16,8">
             <ScrollViewer VerticalScrollBarVisibility="Auto">
                 <StackPanel>
                     <TextBlock Text="Preview" FontSize="14" FontWeight="SemiBold" Foreground="{DynamicResource WindowForeground}" Margin="0,0,0,12" />

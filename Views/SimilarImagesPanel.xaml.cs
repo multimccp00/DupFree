@@ -29,6 +29,8 @@ namespace DupFree.Views
             _similarImageService = new SimilarImageService();
             DataContext = _similarGroups;
 
+            InitializeAutoSelectSettingsUI();
+
             // Setup event handlers
             _similarImageService.OnStatusChanged += (status) => Dispatcher.Invoke(() => UpdateStatus(status));
             _similarImageService.OnProgressChanged += (progress) => Dispatcher.Invoke(() => UpdateProgress(progress));
@@ -72,6 +74,13 @@ namespace DupFree.Views
                     }
                 }
             };
+        }
+
+        private void InitializeAutoSelectSettingsUI()
+        {
+            AutoSelectKeepUncompressedCheckBox.IsChecked = SettingsService.AutoSelectKeepUncompressed;
+            AutoSelectKeepHigherResolutionCheckBox.IsChecked = SettingsService.AutoSelectKeepHigherResolution;
+            AutoSelectKeepLargerFilesizeCheckBox.IsChecked = SettingsService.AutoSelectKeepLargerFilesize;
         }
 
         public void SetDirectories(List<string> directories)
@@ -196,68 +205,6 @@ namespace DupFree.Views
             }
         }
 
-        private async void ClosestPairsButton_Click(object sender, RoutedEventArgs e)
-        {
-            if (_currentDirectories.Count == 0)
-            {
-                MessageBox.Show("Please select directories first.", "No Directories", MessageBoxButton.OK, MessageBoxImage.Information);
-                return;
-            }
-
-            _scanCancellation = new CancellationTokenSource();
-            ClosestPairsButton.IsEnabled = false;
-            StatusText.Text = "Finding closest pairs...";
-
-            try
-            {
-                double maxDistance = MaxDistanceSlider.Value;
-                var groups = await _similarImageService.FindSimilarImagesAsync(
-                    _currentDirectories,
-                    maxDistance,
-                    showClosestPairsOnly: true,
-                    closestPairCount: 30,
-                    cancellationToken: _scanCancellation.Token
-                );
-
-                StatusText.Text = $"Found {groups.Count} closest pairs";
-
-                _similarGroups.Clear();
-                foreach (var group in groups)
-                {
-                    var vmGroup = new SimilarImageGroupViewModel
-                    {
-                        GroupId = group.GroupId,
-                        SimilarityScore = group.SimilarityScore
-                    };
-
-                    foreach (var image in group.Images)
-                    {
-                        vmGroup.Images.Add(image);
-                        image.PropertyChanged += (s, e2) =>
-                        {
-                            if (e2.PropertyName == nameof(FileItemViewModel.IsSelected))
-                            {
-                                UpdateDeleteButtonCount();
-                            }
-                        };
-                    }
-
-                    _similarGroups.Add(vmGroup);
-                }
-
-                NoSimilarPlaceholder.Visibility = _similarGroups.Count > 0 ? Visibility.Collapsed : Visibility.Visible;
-                SimilarGroupsItemsControl.Visibility = _similarGroups.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
-            }
-            catch (Exception ex)
-            {
-                StatusText.Text = $"Error: {ex.Message}";
-                MessageBox.Show($"Error scanning: {ex.Message}\n\n{ex.StackTrace}", "Scan Error", MessageBoxButton.OK, MessageBoxImage.Error);
-            }
-            finally
-            {
-                ClosestPairsButton.IsEnabled = true;
-            }
-        }
 
         private void AutoSelectButton_Click(object sender, RoutedEventArgs e)
         {
@@ -362,106 +309,12 @@ namespace DupFree.Views
             }
         }
 
-        private void SettingsButton_Click(object sender, RoutedEventArgs e)
+        private void AutoSelectSettingsCheckBox_Changed(object sender, RoutedEventArgs e)
         {
-            ShowAutoSelectSettings();
-        }
-
-        private void ShowAutoSelectSettings()
-        {
-            var window = new Window
-            {
-                Title = "Auto-Select Settings",
-                Width = 500,
-                Height = 400,
-                WindowStartupLocation = WindowStartupLocation.CenterOwner,
-                Owner = Window.GetWindow(this),
-                Background = Application.Current.Resources["AppBackground"] as System.Windows.Media.Brush,
-                Foreground = Application.Current.Resources["WindowForeground"] as System.Windows.Media.Brush
-            };
-
-            var panel = new StackPanel { Margin = new Thickness(20), VerticalAlignment = VerticalAlignment.Top };
-
-            var title = new TextBlock
-            {
-                Text = "What pictures will be selected first?",
-                FontSize = 16,
-                FontWeight = FontWeights.SemiBold,
-                Margin = new Thickness(0, 0, 0, 16),
-                Foreground = Application.Current.Resources["WindowForeground"] as System.Windows.Media.Brush
-            };
-            panel.Children.Add(title);
-
-            var cb1 = new CheckBox
-            {
-                Content = "Uncompressed filetype (keep JPG/PNG, delete BMP/TIFF)",
-                IsChecked = SettingsService.AutoSelectKeepUncompressed,
-                Margin = new Thickness(0, 0, 0, 12),
-                Foreground = Application.Current.Resources["WindowForeground"] as System.Windows.Media.Brush
-            };
-            cb1.Checked += (s, e) => SettingsService.SetAutoSelectKeepUncompressed(true);
-            cb1.Unchecked += (s, e) => SettingsService.SetAutoSelectKeepUncompressed(false);
-            panel.Children.Add(cb1);
-
-            var cb2 = new CheckBox
-            {
-                Content = "Lower resolution (keep higher, delete lower)",
-                IsChecked = SettingsService.AutoSelectKeepHigherResolution,
-                Margin = new Thickness(0, 0, 0, 12),
-                Foreground = Application.Current.Resources["WindowForeground"] as System.Windows.Media.Brush
-            };
-            cb2.Checked += (s, e) => SettingsService.SetAutoSelectKeepHigherResolution(true);
-            cb2.Unchecked += (s, e) => SettingsService.SetAutoSelectKeepHigherResolution(false);
-            panel.Children.Add(cb2);
-
-            var cb3 = new CheckBox
-            {
-                Content = "Smaller filesize (keep larger, delete smaller)",
-                IsChecked = SettingsService.AutoSelectKeepLargerFilesize,
-                Margin = new Thickness(0, 0, 0, 16),
-                Foreground = Application.Current.Resources["WindowForeground"] as System.Windows.Media.Brush
-            };
-            cb3.Checked += (s, e) => SettingsService.SetAutoSelectKeepLargerFilesize(true);
-            cb3.Unchecked += (s, e) => SettingsService.SetAutoSelectKeepLargerFilesize(false);
-            panel.Children.Add(cb3);
-
-            var dirLabel = new TextBlock
-            {
-                Text = "Preferred directories (one per line):",
-                Foreground = Application.Current.Resources["MutedForeground"] as System.Windows.Media.Brush,
-                Margin = new Thickness(0, 0, 0, 8),
-                FontSize = 12
-            };
-            panel.Children.Add(dirLabel);
-
-            var dirBox = new TextBox
-            {
-                Text = SettingsService.AutoSelectPreferredDirectories,
-                Height = 80,
-                AcceptsReturn = true,
-                Background = Application.Current.Resources["ControlBackground"] as System.Windows.Media.Brush,
-                Foreground = Application.Current.Resources["WindowForeground"] as System.Windows.Media.Brush,
-                Margin = new Thickness(0, 0, 0, 16)
-            };
-            panel.Children.Add(dirBox);
-
-            var closeBtn = new Button
-            {
-                Content = "Close",
-                Padding = new Thickness(20, 8, 20, 8),
-                HorizontalAlignment = HorizontalAlignment.Right,
-                Style = Application.Current.Resources["PrimaryButton"] as Style
-            };
-            closeBtn.Click += (s, e) =>
-            {
-                SettingsService.SetAutoSelectPreferredDirectories(dirBox.Text);
-                SettingsService.SaveToFile();
-                window.Close();
-            };
-            panel.Children.Add(closeBtn);
-
-            window.Content = panel;
-            window.ShowDialog();
+            SettingsService.SetAutoSelectKeepUncompressed(AutoSelectKeepUncompressedCheckBox.IsChecked == true);
+            SettingsService.SetAutoSelectKeepHigherResolution(AutoSelectKeepHigherResolutionCheckBox.IsChecked == true);
+            SettingsService.SetAutoSelectKeepLargerFilesize(AutoSelectKeepLargerFilesizeCheckBox.IsChecked == true);
+            SettingsService.SaveToFile();
         }
 
         private void DeleteSimilarSelectedButton_Click(object sender, RoutedEventArgs e)
