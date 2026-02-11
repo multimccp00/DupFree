@@ -443,6 +443,23 @@ namespace DupFree.Views
         {
             if (sender is Border border && border.DataContext is FileItemViewModel fileItem)
             {
+                // Left click toggles selection; always update preview
+                if (e.ChangedButton == System.Windows.Input.MouseButton.Left)
+                {
+                    fileItem.IsSelected = !fileItem.IsSelected;
+                    UpdateDeleteButtonCount();
+                }
+
+                _selectedForPreview = fileItem;
+                UpdatePreviewPane(fileItem);
+            }
+        }
+
+        private void Thumbnail_MouseEnter(object sender, System.Windows.Input.MouseEventArgs e)
+        {
+            if (sender is Border border && border.DataContext is FileItemViewModel fileItem)
+            {
+                // Hover only updates preview, does not change selection
                 _selectedForPreview = fileItem;
                 UpdatePreviewPane(fileItem);
             }

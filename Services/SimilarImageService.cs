@@ -28,6 +28,10 @@ namespace DupFree.Services
 
     public class SimilarImageService
     {
+        private static readonly double CompositeWeightSsim = 0.65;
+        private static readonly double CompositeWeightHash = 0.15;
+        private static readonly double CompositeWeightHist = 0.10;
+        private static readonly double CompositeWeightComp = 0.10;
         public event Action<string> OnStatusChanged;
         public event Action<int> OnProgressChanged;
 
@@ -91,7 +95,7 @@ namespace DupFree.Services
             // 2. PHASE 1: Fast hash computation (O(N)) - PARALLELIZED
             OnStatusChanged?.Invoke("Computing perceptual hashes...");
             var entriesLock = new object();
-            var entries = new System.Collections.Concurrent.ConcurrentBag<(string path, byte[] hash, int originalIndex)>();
+            var entries = new System.Collections.Concurrent.ConcurrentBag<(string path, byte[] hash, float[] hist, float[] spatial, int originalIndex)>();
             
             Parallel.For(0, imageFiles.Count, new ParallelOptions 
             { 
@@ -101,9 +105,13 @@ namespace DupFree.Services
             {
                 string filePath = imageFiles[i];
                 byte[] hash = GetImageHash(filePath);
+                float[] hist = null;
+                float[] spatial = null;
+                try { hist = ComputeColorHistogram(filePath); } catch { hist = null; }
+                try { spatial = ComputeSpatialHistogram(filePath); } catch { spatial = null; }
                 if (hash != null)
                 {
-                    entries.Add((filePath, hash, i));
+                    entries.Add((filePath, hash, hist, spatial, i));
                 }
 
                 if (i % 10 == 0)
@@ -113,18 +121,33 @@ namespace DupFree.Services
                 }
             });
 
-            var sortedEntries = entries.OrderBy(e => e.originalIndex).Select(e => (e.path, e.hash)).ToList();
+            var sortedEntries = entries.OrderBy(e => e.originalIndex).Select(e => (e.path, e.hash, e.hist, e.spatial)).ToList();
 
             if (sortedEntries.Count < 2) return results;
 
             // 3. PHASE 2: Build candidate pairs using hash pre-filter (fast, reduces SSIM comparisons) - PARALLELIZED
             OnStatusChanged?.Invoke("Finding hash-similar candidates...");
-            double ssimThreshold = Math.Clamp(maxDistance, 85.0, 99.0) / 100.0;
+            // Allow user to lower similarity down to 75% (was previously clamped to 85%)
+            double ssimThreshold = Math.Clamp(maxDistance, 75.0, 99.0) / 100.0;
             // Use LOOSER hash threshold (25 bits) since we skip exact duplicates anyway
             int hashThreshold = 25;
+            // Stronger hash threshold previously used for rule checks; keep as a soft signal
+            int strongHashThreshold = 22;
             
             var candidatePairsLock = new object();
             var candidatePairs = new System.Collections.Concurrent.ConcurrentBag<(int i, int j, int hashDist)>();
+            // histogram-distance threshold (lower = more similar). tuneable.
+            // Keep prefilter permissive so we don't drop candidates that only show
+            // up at lower SSIM levels; use a tighter hist check later when accepting
+            // low-SSIM pairs.
+            double histThreshold = 0.95;
+            double histTight = 0.25; // legacy - kept for compatibility
+            double lowerSsimBound = 0.75; // legacy - kept for compatibility
+            // Composite scoring weights
+            double compositeThreshold = ssimThreshold; // require composite >= ssimThreshold
+            // composition (spatial) histogram thresholds
+            double compThreshold = 0.95; // permissive prefilter
+            double compTight = 0.35; // stricter for low-SSIM acceptance
             int totalPairs = sortedEntries.Count * (sortedEntries.Count - 1) / 2;
             int pairsChecked = 0;
             var pairsCheckedLock = new object();
@@ -140,7 +163,26 @@ namespace DupFree.Services
                     if (ct.IsCancellationRequested) return;
 
                     int dist = HammingDistance(sortedEntries[i].hash, sortedEntries[j].hash);
-                    if (dist <= hashThreshold)
+                    // quick color histogram prefilter to avoid obvious mismatches
+                    var histA = sortedEntries[i].hist;
+                    var histB = sortedEntries[j].hist;
+                    var compA = sortedEntries[i].spatial;
+                    var compB = sortedEntries[j].spatial;
+                    bool histOk = true;
+                    if (histA != null && histB != null)
+                    {
+                        var hd = HistogramDistance(histA, histB);
+                        histOk = hd <= histThreshold;
+                    }
+
+                    bool compOk = true;
+                    if (compA != null && compB != null)
+                    {
+                        var cd = SpatialHistogramDistance(compA, compB);
+                        compOk = cd <= compThreshold;
+                    }
+
+                    if (dist <= hashThreshold && (histOk || compOk))
                     {
                         candidatePairs.Add((i, j, dist));
                     }
@@ -166,140 +208,105 @@ namespace DupFree.Services
                 return results;
             }
 
-            // 4. PHASE 3: SSIM verification on candidates only (accurate but only for small subset) - PARALLELIZED
-            OnStatusChanged?.Invoke($"Verifying {sortedCandidates.Count} candidates with SSIM...");
+            // 4. PHASE 3: SSIM verification on candidates only (compute SSIMs in parallel and stream groups as found)
+            OnStatusChanged?.Invoke($"Verifying {sortedCandidates.Count} candidates with SSIM (parallel streaming)...");
+            var thumbnailCache = new System.Collections.Concurrent.ConcurrentDictionary<int, MagickImage>();
+
+            var allScoresBag = new System.Collections.Concurrent.ConcurrentBag<(double ssim, int a, int b)>();
+            int verifiedCount = 0;
+
+            // Prepare streaming/grouping structures up front so parallel threads can add groups immediately
+            var pathToIndex = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            for (int idx = 0; idx < sortedEntries.Count; idx++)
+                pathToIndex[sortedEntries[idx].path] = idx;
+
             var groupAssignment = new int[sortedEntries.Count];
             Array.Fill(groupAssignment, -1);
             int groupIndex = 0;
-            var allScoresLock = new object();
-            var allScores = new List<(double ssim, int a, int b)>();
-
-            // Load thumbnails on-demand with caching and thread-safety (smaller 128x128 for speed)
-            var thumbnailCache = new System.Collections.Concurrent.ConcurrentDictionary<int, MagickImage>();
             var groupAssignmentLock = new object();
             var resultsLock = new object();
 
-            int verified = 0;
-            var verifiedLock = new object();
-
-            // Process candidates in order (by hash distance) to get best matches first
-            foreach (var (i, j, hashDist) in sortedCandidates)
+            Parallel.ForEach(sortedCandidates, new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount, CancellationToken = ct }, pair =>
             {
-                if (ct.IsCancellationRequested) break;
-
-                // Skip files with same name AND size (already handled by duplicate detection)
-                var fileInfoI = new FileInfo(sortedEntries[i].path);
-                var fileInfoJ = new FileInfo(sortedEntries[j].path);
-                if (fileInfoI.Name == fileInfoJ.Name && fileInfoI.Length == fileInfoJ.Length)
-                {
-                    continue;
-                }
-
-                // Load thumbnails on-demand - SMALLER SIZE (128x128) for speed
-                var thumbI = thumbnailCache.GetOrAdd(i, idx =>
-                {
-                    try
-                    {
-                        var img = new MagickImage(sortedEntries[idx].path);
-                        var geo = new MagickGeometry(128, 128);
-                        geo.IgnoreAspectRatio = false;
-                        img.Resize(geo);
-                        img.Extent(128, 128, Gravity.Center, MagickColors.Black);
-                        return img;
-                    }
-                    catch { return null; }
-                });
-
-                var thumbJ = thumbnailCache.GetOrAdd(j, idx =>
-                {
-                    try
-                    {
-                        var img = new MagickImage(sortedEntries[idx].path);
-                        var geo = new MagickGeometry(128, 128);
-                        geo.IgnoreAspectRatio = false;
-                        img.Resize(geo);
-                        img.Extent(128, 128, Gravity.Center, MagickColors.Black);
-                        return img;
-                    }
-                    catch { return null; }
-                });
-
-                if (thumbI == null || thumbJ == null) continue;
-
-                // SSIM verification
-                double ssim = 0.0;
+                var (i, j, hashDist) = pair;
                 try
                 {
-                    double distortion = thumbI.Compare(thumbJ, ErrorMetric.StructuralSimilarity);
-                    ssim = Math.Clamp(1.0 - distortion, 0.0, 1.0);
+                    // Skip files with same name and size
+                    var fileInfoI = new FileInfo(sortedEntries[i].path);
+                    var fileInfoJ = new FileInfo(sortedEntries[j].path);
+                    if (fileInfoI.Name == fileInfoJ.Name && fileInfoI.Length == fileInfoJ.Length)
+                        return;
+
+                    // Load thumbnails on-demand - SMALLER SIZE (128x128) for speed
+                    var thumbI = thumbnailCache.GetOrAdd(i, idx =>
+                    {
+                        try
+                        {
+                            var img = new MagickImage(sortedEntries[idx].path);
+                            var geo = new MagickGeometry(128, 128);
+                            geo.IgnoreAspectRatio = false;
+                            img.Resize(geo);
+                            img.Extent(128, 128, Gravity.Center, MagickColors.Black);
+                            return img;
+                        }
+                        catch { return null; }
+                    });
+
+                    var thumbJ = thumbnailCache.GetOrAdd(j, idx =>
+                    {
+                        try
+                        {
+                            var img = new MagickImage(sortedEntries[idx].path);
+                            var geo = new MagickGeometry(128, 128);
+                            geo.IgnoreAspectRatio = false;
+                            img.Resize(geo);
+                            img.Extent(128, 128, Gravity.Center, MagickColors.Black);
+                            return img;
+                        }
+                        catch { return null; }
+                    });
+
+                    if (thumbI == null || thumbJ == null) return;
+
+                    double ssim = 0.0;
+                    try
+                    {
+                        double distortion = thumbI.Compare(thumbJ, ErrorMetric.StructuralSimilarity);
+                        ssim = Math.Clamp(1.0 - distortion, 0.0, 1.0);
+                    }
+                    catch { }
+
+                    allScoresBag.Add((ssim, i, j));
+                    var current = System.Threading.Interlocked.Increment(ref verifiedCount);
+                    if (current % 50 == 0)
+                        OnStatusChanged?.Invoke($"SSIM computed {current}/{sortedCandidates.Count}...");
+
+                    // Stream groups: compute composite score and accept if above threshold
+                    int pairHashDist = HammingDistance(sortedEntries[i].hash, sortedEntries[j].hash);
+                    double hashSim = 0.5;
+                    if (sortedEntries[i].hash != null && sortedEntries[j].hash != null && sortedEntries[i].hash.Length > 0)
+                        hashSim = 1.0 - (double)HammingDistance(sortedEntries[i].hash, sortedEntries[j].hash) / sortedEntries[i].hash.Length;
+
+                    double pairHistDist = double.MaxValue; double histSim = 0.5;
+                    if (sortedEntries[i].hist != null && sortedEntries[j].hist != null)
+                    {
+                        pairHistDist = HistogramDistance(sortedEntries[i].hist, sortedEntries[j].hist);
+                        histSim = 1.0 - pairHistDist;
+                    }
+
+                    double pairCompDist = double.MaxValue; double compSim = 0.5;
+                    if (sortedEntries[i].spatial != null && sortedEntries[j].spatial != null)
+                    {
+                        pairCompDist = SpatialHistogramDistance(sortedEntries[i].spatial, sortedEntries[j].spatial);
+                        compSim = 1.0 - pairCompDist;
+                    }
+
+                    double composite = (CompositeWeightSsim * ssim) + (CompositeWeightHash * hashSim) + (CompositeWeightHist * histSim) + (CompositeWeightComp * compSim);
+
+                    // Composite scoring is evaluated post-SSIM pass to build a full edge graph
                 }
                 catch { }
-
-                lock (allScoresLock)
-                {
-                    allScores.Add((ssim, i, j));
-                }
-
-                lock (verifiedLock)
-                {
-                    verified++;
-                    if (verified % 10 == 0)
-                        OnStatusChanged?.Invoke($"SSIM verified {verified}/{sortedCandidates.Count}... ({results.Count} groups)");
-                }
-
-                // Stream: Check if this pair should form/extend a group
-                if (!showClosestPairsOnly && ssim >= ssimThreshold)
-                {
-                    lock (groupAssignmentLock)
-                    {
-                        int gi = groupAssignment[i];
-                        int gj = groupAssignment[j];
-
-                        if (gi == -1 && gj == -1)
-                        {
-                            // Create new group
-                            var group = new SimilarImageGroup
-                            {
-                                GroupId = $"group_{groupIndex}",
-                                Images = new List<FileItemViewModel>
-                                {
-                                    CreateFileItem(sortedEntries[i].path),
-                                    CreateFileItem(sortedEntries[j].path)
-                                },
-                                SimilarityScore = ssim
-                            };
-                            lock (resultsLock)
-                            {
-                                results.Add(group);
-                                groupAssignment[i] = groupIndex;
-                                groupAssignment[j] = groupIndex;
-                                groupIndex++;
-                                OnGroupFound?.Invoke(group);
-                            }
-                        }
-                        else if (gi >= 0 && gj == -1)
-                        {
-                            var item = CreateFileItem(sortedEntries[j].path);
-                            results[gi].Images.Add(item);
-                            groupAssignment[j] = gi;
-                            OnImageAddedToGroup?.Invoke(results[gi].GroupId, item);
-                            
-                            // Try to merge groups if they connect
-                            TryMergeGroupsStreaming(results, gi, groupAssignment, sortedEntries, thumbnailCache, ssimThreshold);
-                        }
-                        else if (gi == -1 && gj >= 0)
-                        {
-                            var item = CreateFileItem(sortedEntries[i].path);
-                            results[gj].Images.Add(item);
-                            groupAssignment[i] = gj;
-                            OnImageAddedToGroup?.Invoke(results[gj].GroupId, item);
-                            
-                            // Try to merge groups if they connect
-                            TryMergeGroupsStreaming(results, gj, groupAssignment, sortedEntries, thumbnailCache, ssimThreshold);
-                        }
-                    }
-                }
-            }
+            });
 
             // Cleanup thumbnails
             foreach (var thumb in thumbnailCache.Values)
@@ -307,12 +314,85 @@ namespace DupFree.Services
                 thumb.Dispose();
             }
 
+            // Materialize scores list for later use (debugging / closest pairs)
+            var allScores = allScoresBag.ToList();
+            allScores = allScores.OrderByDescending(s => s.ssim).ToList();
+
+            // Build graph edges using composite scoring and then form connected components (union-find)
+            int n = sortedEntries.Count;
+            var parent = new int[n];
+            var compSize = new int[n];
+            for (int i = 0; i < n; i++) { parent[i] = i; compSize[i] = 1; }
+            Func<int,int> find = null;
+            find = x => parent[x] == x ? x : (parent[x] = find(parent[x]));
+            Action<int,int> unite = (a, b) => {
+                a = find(a); b = find(b);
+                if (a == b) return;
+                if (compSize[a] < compSize[b]) { var t = a; a = b; b = t; }
+                parent[b] = a; compSize[a] += compSize[b];
+            };
+
+            foreach (var s in allScores)
+            {
+                int a = s.a, b = s.b;
+                double ssim = s.ssim;
+
+                double hashSim = 0.5;
+                if (sortedEntries[a].hash != null && sortedEntries[b].hash != null && sortedEntries[a].hash.Length > 0)
+                    hashSim = 1.0 - (double)HammingDistance(sortedEntries[a].hash, sortedEntries[b].hash) / sortedEntries[a].hash.Length;
+
+                double histSim = 0.5;
+                if (sortedEntries[a].hist != null && sortedEntries[b].hist != null)
+                    histSim = 1.0 - HistogramDistance(sortedEntries[a].hist, sortedEntries[b].hist);
+
+                double compSim = 0.5;
+                if (sortedEntries[a].spatial != null && sortedEntries[b].spatial != null)
+                    compSim = 1.0 - SpatialHistogramDistance(sortedEntries[a].spatial, sortedEntries[b].spatial);
+
+                double composite = (CompositeWeightSsim * ssim) + (CompositeWeightHash * hashSim) + (CompositeWeightHist * histSim) + (CompositeWeightComp * compSim);
+                if (composite >= compositeThreshold)
+                    unite(a, b);
+            }
+
+            // Collect components
+            var comps = new Dictionary<int, List<int>>();
+            for (int i = 0; i < n; i++)
+            {
+                int r = find(i);
+                if (!comps.TryGetValue(r, out var list)) { list = new List<int>(); comps[r] = list; }
+                list.Add(i);
+            }
+
+            // Create groups from components (only size >= 2)
+            results.Clear();
+            foreach (var kv in comps)
+            {
+                var members = kv.Value;
+                if (members.Count < 2) continue;
+                double bestSsim = 0.0;
+                foreach (var p1 in members)
+                    foreach (var p2 in members)
+                        if (p2 > p1)
+                        {
+                            var found = allScores.FirstOrDefault(x => (x.a == p1 && x.b == p2) || (x.a == p2 && x.b == p1));
+                            if (found.ssim > bestSsim) bestSsim = found.ssim;
+                        }
+
+                var group = new SimilarImageGroup
+                {
+                    GroupId = $"group_{results.Count}",
+                    Images = members.Select(mi => CreateFileItem(sortedEntries[mi].path)).ToList(),
+                    SimilarityScore = bestSsim
+                };
+                results.Add(group);
+                OnGroupFound?.Invoke(group);
+            }
+
             // Save scores for debugging
             try
             {
                 var scorePath = Path.Combine(Path.GetTempPath(), "dupfree_scores.txt");
                 var lines = allScores
-                    .OrderByDescending(s => s.ssim)
                     .Take(50)
                     .Select(s => $"{s.ssim:F4}\t{Path.GetFileName(sortedEntries[s.a].path)}\t{Path.GetFileName(sortedEntries[s.b].path)}");
                 File.WriteAllLines(scorePath, lines);
@@ -358,9 +438,15 @@ namespace DupFree.Services
             List<SimilarImageGroup> groups,
             int targetGroupIdx,
             int[] groupAssignment,
-            List<(string path, byte[] hash)> entries,
+            List<(string path, byte[] hash, float[] hist, float[] spatial)> entries,
             System.Collections.Concurrent.ConcurrentDictionary<int, MagickImage> thumbnailCache,
-            double ssimThreshold)
+            double ssimThreshold,
+            Dictionary<string, int> pathToIndex,
+            int strongHashThreshold,
+            double lowerSsimBound,
+            double histTight,
+            double compTight,
+            double compositeThreshold)
         {
             if (targetGroupIdx < 0 || targetGroupIdx >= groups.Count) return;
 
@@ -379,13 +465,9 @@ namespace DupFree.Services
                     for (int b = 0; b < groups[otherIdx].Images.Count && checksPerformed < maxChecks; b++)
                     {
                         int idxA = -1, idxB = -1;
-                        for (int k = 0; k < entries.Count; k++)
-                        {
-                            if (entries[k].path == groups[targetGroupIdx].Images[a].FilePath) idxA = k;
-                            if (entries[k].path == groups[otherIdx].Images[b].FilePath) idxB = k;
-                        }
-
-                        if (idxA < 0 || idxB < 0) continue;
+                        if (!pathToIndex.TryGetValue(groups[targetGroupIdx].Images[a].FilePath, out idxA)) continue;
+                        if (!pathToIndex.TryGetValue(groups[otherIdx].Images[b].FilePath, out idxB)) continue;
+                        if (idxA < 0 || idxB < 0 || idxA >= entries.Count || idxB >= entries.Count) continue;
                         checksPerformed++;
 
                         var thumbA = thumbnailCache.GetOrAdd(idxA, idx =>
@@ -429,11 +511,34 @@ namespace DupFree.Services
                             if (infoA.Name == infoB.Name && infoA.Length == infoB.Length)
                                 continue;
 
-                            if (ssim >= ssimThreshold) // Keep all similar (including exact)
-                            {
-                                shouldMerge = true;
-                                break;
-                            }
+                                    // Also require reasonable hash similarity and/or histogram agreement to avoid merging unrelated images
+                                    int mergeHashDist = HammingDistance(entries[idxA].hash, entries[idxB].hash);
+                                    double mergeHistDist = double.MaxValue;
+                                    if (entries[idxA].hist != null && entries[idxB].hist != null)
+                                        mergeHistDist = HistogramDistance(entries[idxA].hist, entries[idxB].hist);
+
+                                    double mergeCompDist = double.MaxValue;
+                                    if (entries[idxA].spatial != null && entries[idxB].spatial != null)
+                                        mergeCompDist = SpatialHistogramDistance(entries[idxA].spatial, entries[idxB].spatial);
+
+                                    double mergeHashSim = 0.5;
+                                    if (entries[idxA].hash != null && entries[idxB].hash != null && entries[idxA].hash.Length > 0)
+                                        mergeHashSim = 1.0 - (double)HammingDistance(entries[idxA].hash, entries[idxB].hash) / entries[idxA].hash.Length;
+
+                                    double mergeHistSim = 0.5;
+                                    if (entries[idxA].hist != null && entries[idxB].hist != null)
+                                        mergeHistSim = 1.0 - HistogramDistance(entries[idxA].hist, entries[idxB].hist);
+
+                                    double mergeCompSim = 0.5;
+                                    if (entries[idxA].spatial != null && entries[idxB].spatial != null)
+                                        mergeCompSim = 1.0 - SpatialHistogramDistance(entries[idxA].spatial, entries[idxB].spatial);
+
+                                    double mergeComposite = (CompositeWeightSsim * ssim) + (CompositeWeightHash * mergeHashSim) + (CompositeWeightHist * mergeHistSim) + (CompositeWeightComp * mergeCompSim);
+                                    if (mergeComposite >= compositeThreshold)
+                                    {
+                                        shouldMerge = true;
+                                        break;
+                                    }
                         }
                         catch { }
                     }
@@ -551,6 +656,112 @@ namespace DupFree.Services
             return distance;
         }
 
+        private float[] ComputeColorHistogram(string filePath)
+        {
+            const int binsPerChannel = 4; // 4x4x4 = 64-bin histogram
+            int totalBins = binsPerChannel * binsPerChannel * binsPerChannel;
+            var hist = new float[totalBins];
+
+            using (var bmp = new Bitmap(filePath))
+            using (var small = new Bitmap(bmp, new Size(64, 64)))
+            {
+                for (int y = 0; y < small.Height; y++)
+                {
+                    for (int x = 0; x < small.Width; x++)
+                    {
+                        var c = small.GetPixel(x, y);
+                        int r = c.R * binsPerChannel / 256;
+                        int g = c.G * binsPerChannel / 256;
+                        int b = c.B * binsPerChannel / 256;
+                        if (r >= binsPerChannel) r = binsPerChannel - 1;
+                        if (g >= binsPerChannel) g = binsPerChannel - 1;
+                        if (b >= binsPerChannel) b = binsPerChannel - 1;
+                        int idx = (r * binsPerChannel + g) * binsPerChannel + b;
+                        hist[idx] += 1.0f;
+                    }
+                }
+            }
+
+            // normalize
+            float sum = hist.Sum();
+            if (sum > 0)
+            {
+                for (int i = 0; i < hist.Length; i++)
+                    hist[i] /= sum;
+            }
+
+            return hist;
+        }
+
+        private float[] ComputeSpatialHistogram(string filePath)
+        {
+            const int grid = 3;
+            const int binsPerChannel = 4; // 4x4x4 per cell
+            int binsPerCell = binsPerChannel * binsPerChannel * binsPerChannel; // 64
+            int totalBins = binsPerCell * grid * grid; // 64 * 9 = 576
+            var hist = new float[totalBins];
+
+            using (var bmp = new Bitmap(filePath))
+            using (var small = new Bitmap(bmp, new Size(96, 96)))
+            {
+                int cellW = small.Width / grid;
+                int cellH = small.Height / grid;
+                for (int y = 0; y < small.Height; y++)
+                {
+                    for (int x = 0; x < small.Width; x++)
+                    {
+                        var c = small.GetPixel(x, y);
+                        int r = c.R * binsPerChannel / 256;
+                        int g = c.G * binsPerChannel / 256;
+                        int b = c.B * binsPerChannel / 256;
+                        if (r >= binsPerChannel) r = binsPerChannel - 1;
+                        if (g >= binsPerChannel) g = binsPerChannel - 1;
+                        if (b >= binsPerChannel) b = binsPerChannel - 1;
+
+                        int cellX = Math.Min(x / cellW, grid - 1);
+                        int cellY = Math.Min(y / cellH, grid - 1);
+                        int cellIdx = cellY * grid + cellX;
+                        int idx = cellIdx * binsPerCell + (r * binsPerChannel + g) * binsPerChannel + b;
+                        hist[idx] += 1.0f;
+                    }
+                }
+            }
+
+            // normalize
+            float sum = hist.Sum();
+            if (sum > 0)
+            {
+                for (int i = 0; i < hist.Length; i++)
+                    hist[i] /= sum;
+            }
+
+            return hist;
+        }
+
+        private double SpatialHistogramDistance(float[] a, float[] b)
+        {
+            if (a == null || b == null) return double.MaxValue;
+            if (a.Length != b.Length) return double.MaxValue;
+            double sum = 0.0;
+            for (int i = 0; i < a.Length; i++)
+                sum += Math.Abs(a[i] - b[i]);
+            // normalize (max sum is 2)
+            return sum / 2.0;
+        }
+
+        private double HistogramDistance(float[] a, float[] b)
+        {
+            if (a == null || b == null) return double.MaxValue;
+            if (a.Length != b.Length) return double.MaxValue;
+            double sum = 0.0;
+            for (int i = 0; i < a.Length; i++)
+            {
+                sum += Math.Abs(a[i] - b[i]);
+            }
+            // L1 distance normalized to [0,1] (max sum is 2)
+            return sum / 2.0;
+        }
+
         private FileItemViewModel CreateFileItem(string filePath)
         {
             try
@@ -561,6 +772,49 @@ namespace DupFree.Services
             {
                 return new FileItemViewModel { FilePath = filePath, FileName = Path.GetFileName(filePath) };
             }
+        }
+
+        private double? ComputeSsimBetweenIndices(int idxA, int idxB, List<(string path, byte[] hash, float[] hist, float[] spatial)> entries, System.Collections.Concurrent.ConcurrentDictionary<int, MagickImage> thumbnailCache)
+        {
+            try
+            {
+                if (idxA < 0 || idxB < 0 || idxA >= entries.Count || idxB >= entries.Count) return null;
+
+                var thumbA = thumbnailCache.GetOrAdd(idxA, idx =>
+                {
+                    try
+                    {
+                        var img = new MagickImage(entries[idx].path);
+                        var geo = new MagickGeometry(128, 128);
+                        geo.IgnoreAspectRatio = false;
+                        img.Resize(geo);
+                        img.Extent(128, 128, Gravity.Center, MagickColors.Black);
+                        return img;
+                    }
+                    catch { return null; }
+                });
+
+                var thumbB = thumbnailCache.GetOrAdd(idxB, idx =>
+                {
+                    try
+                    {
+                        var img = new MagickImage(entries[idx].path);
+                        var geo = new MagickGeometry(128, 128);
+                        geo.IgnoreAspectRatio = false;
+                        img.Resize(geo);
+                        img.Extent(128, 128, Gravity.Center, MagickColors.Black);
+                        return img;
+                    }
+                    catch { return null; }
+                });
+
+                if (thumbA == null || thumbB == null) return null;
+
+                double distortion = thumbA.Compare(thumbB, ErrorMetric.StructuralSimilarity);
+                double ssim = Math.Clamp(1.0 - distortion, 0.0, 1.0);
+                return ssim;
+            }
+            catch { return null; }
         }
     }
 }
