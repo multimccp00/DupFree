@@ -35,15 +35,12 @@ namespace DupFree.Services
         // Confirm delete dialog
         public static bool ConfirmDelete { get; private set; } = true;
 
-        // Similar images settings
-        public static double SimilarImageThreshold { get; private set; } = 0.85;
-        public static bool AutoSelectSimilarImages { get; private set; } = false;
-        
         // Auto-select options for similar images
         public static bool AutoSelectKeepUncompressed { get; private set; } = false;
         public static bool AutoSelectKeepHigherResolution { get; private set; } = true;
         public static bool AutoSelectKeepLargerFilesize { get; private set; } = false;
-        public static string AutoSelectPreferredDirectories { get; private set; } = "";
+        // Debug timer display for similar images scan
+        public static bool ShowScanTimer { get; private set; } = false;
 
         public static event Action OnSettingsChanged;
 
@@ -95,18 +92,6 @@ namespace DupFree.Services
             OnSettingsChanged?.Invoke();
         }
 
-        public static void SetSimilarImageThreshold(double threshold)
-        {
-            SimilarImageThreshold = Math.Clamp(threshold, 0.0, 1.0);
-            OnSettingsChanged?.Invoke();
-        }
-
-        public static void SetAutoSelectSimilarImages(bool autoSelect)
-        {
-            AutoSelectSimilarImages = autoSelect;
-            OnSettingsChanged?.Invoke();
-        }
-
         public static void SetAutoSelectKeepUncompressed(bool keep)
         {
             AutoSelectKeepUncompressed = keep;
@@ -125,10 +110,15 @@ namespace DupFree.Services
             OnSettingsChanged?.Invoke();
         }
 
-        public static void SetAutoSelectPreferredDirectories(string directories)
+        public static void SetShowScanTimer(bool show)
         {
-            AutoSelectPreferredDirectories = directories;
+            ShowScanTimer = show;
             OnSettingsChanged?.Invoke();
+        }
+
+        public static bool GetShowScanTimer()
+        {
+            return ShowScanTimer;
         }
         
         private static string GetSettingsFilePath()
@@ -154,12 +144,10 @@ namespace DupFree.Services
                     GridPictureSize,
                     ShowGridFilePath,
                     ConfirmDelete,
-                    SimilarImageThreshold,
-                    AutoSelectSimilarImages,
                     AutoSelectKeepUncompressed,
                     AutoSelectKeepHigherResolution,
                     AutoSelectKeepLargerFilesize,
-                    AutoSelectPreferredDirectories
+                    ShowScanTimer
                 };
                 
                 var json = JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true });
@@ -207,12 +195,6 @@ namespace DupFree.Services
                 if (root.TryGetProperty("ConfirmDelete", out var confirmDelete))
                     ConfirmDelete = confirmDelete.GetBoolean();
 
-                if (root.TryGetProperty("SimilarImageThreshold", out var threshold))
-                    SimilarImageThreshold = threshold.GetDouble();
-
-                if (root.TryGetProperty("AutoSelectSimilarImages", out var autoSelect))
-                    AutoSelectSimilarImages = autoSelect.GetBoolean();
-
                 if (root.TryGetProperty("AutoSelectKeepUncompressed", out var keepUncompressed))
                     AutoSelectKeepUncompressed = keepUncompressed.GetBoolean();
 
@@ -222,8 +204,8 @@ namespace DupFree.Services
                 if (root.TryGetProperty("AutoSelectKeepLargerFilesize", out var keepLarger))
                     AutoSelectKeepLargerFilesize = keepLarger.GetBoolean();
 
-                if (root.TryGetProperty("AutoSelectPreferredDirectories", out var preferredDirs))
-                    AutoSelectPreferredDirectories = preferredDirs.GetString() ?? "";
+                if (root.TryGetProperty("ShowScanTimer", out var showTimer))
+                    ShowScanTimer = showTimer.GetBoolean();
             }
             catch { /* Silently fail if settings can't be loaded */ }
         }

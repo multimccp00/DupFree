@@ -3,6 +3,65 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     Background="{DynamicResource AppBackground}"
     Foreground="{DynamicResource WindowForeground}">
+    <UserControl.Resources>
+        <!-- Rounded Slider Style -->
+        <Style x:Key="RoundedSliderStyle" TargetType="{x:Type Slider}">
+            <Setter Property="Height" Value="26" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type Slider}">
+                        <Grid VerticalAlignment="Center" Height="26">
+                            <!-- Full-width track line that passes behind/through the thumb -->
+                            <Border Background="#9CA3AF" Height="3" VerticalAlignment="Center" CornerRadius="1.5" Margin="0,0,0,0" />
+                            <!-- Invisible Track for interaction and thumb positioning -->
+                            <Track Name="PART_Track" VerticalAlignment="Center">
+                                <Track.DecreaseRepeatButton>
+                                    <RepeatButton Command="Slider.DecreaseLarge" Height="26" Opacity="0" />
+                                </Track.DecreaseRepeatButton>
+                                <Track.Thumb>
+                                    <Thumb Width="22" Height="22">
+                                        <Thumb.Template>
+                                            <ControlTemplate TargetType="Thumb">
+                                                <Ellipse Width="22" Height="22" 
+                                                         Fill="White" 
+                                                         Stroke="#CCCCCC" StrokeThickness="0.5" />
+                                            </ControlTemplate>
+                                        </Thumb.Template>
+                                    </Thumb>
+                                </Track.Thumb>
+                                <Track.IncreaseRepeatButton>
+                                    <RepeatButton Command="Slider.IncreaseLarge" Height="26" Opacity="0" />
+                                </Track.IncreaseRepeatButton>
+                            </Track>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        
+        <!-- Rounded ProgressBar Style -->
+        <Style x:Key="RoundedProgressBarStyle" TargetType="{x:Type ProgressBar}">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type ProgressBar}">
+                        <Grid ClipToBounds="True">
+                            <Border Name="PART_Track" Background="#374151" CornerRadius="5" Height="{TemplateBinding Height}" />
+                            <Border Name="PART_Indicator" Background="{TemplateBinding Foreground}" CornerRadius="5" Height="{TemplateBinding Height}" HorizontalAlignment="Left">
+                                <Border.Width>
+                                    <MultiBinding Converter="{StaticResource ProgressToWidthConverter}">
+                                        <Binding RelativeSource="{RelativeSource TemplatedParent}" Path="Value" />
+                                        <Binding RelativeSource="{RelativeSource TemplatedParent}" Path="Minimum" />
+                                        <Binding RelativeSource="{RelativeSource TemplatedParent}" Path="Maximum" />
+                                        <Binding RelativeSource="{RelativeSource TemplatedParent}" Path="ActualWidth" />
+                                    </MultiBinding>
+                                </Border.Width>
+                            </Border>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </UserControl.Resources>
     <Grid>
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="*" />
@@ -23,17 +82,33 @@
                 </Grid.ColumnDefinitions>
 
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                    <Button Name="ScanSimilarButton" Click="ScanSimilarButton_Click" Style="{StaticResource PrimaryButton}" Padding="20,8" Height="40">Scan for Similar</Button>
+                    <Button Name="DeleteSimilarSelectedButton" Click="DeleteSimilarSelectedButton_Click" Style="{StaticResource DangerButton}" Padding="20,8" Height="40" Margin="0,0,12,0">Delete Selected (0)</Button>
 
-                    <TextBlock Text="Similarity:" Foreground="{DynamicResource ControlForeground}" Margin="24,0,8,0" VerticalAlignment="Center" />
-                        <Slider Name="MaxDistanceSlider" Minimum="75" Maximum="99" Value="92" Width="150" VerticalAlignment="Center" Margin="0,0,8,0"
-                            ValueChanged="MaxDistanceSlider_ValueChanged" ToolTip="Minimum SSIM similarity to group images. Higher = stricter matching." IsSnapToTickEnabled="True" TickFrequency="1" />
-                    <TextBlock Name="MaxDistanceText" Text="92%" Foreground="{DynamicResource ControlForeground}" Width="35" VerticalAlignment="Center" Margin="0,0,16,0" />
+                    <TextBlock Text="Similarity:" Foreground="{DynamicResource ControlForeground}" Margin="12,0,8,0" VerticalAlignment="Center" />
+                    <Border Background="{DynamicResource ControlBackground}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="10" Padding="10,8" Margin="0,0,12,0">
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <!-- Slider -->
+                            <Slider Name="MaxDistanceSlider" Minimum="75" Maximum="99" Value="84" Width="150" VerticalAlignment="Center" Margin="0,0,8,0"
+                                    Style="{StaticResource RoundedSliderStyle}"
+                                    ValueChanged="MaxDistanceSlider_ValueChanged" ToolTip="Minimum SSIM similarity to group images. Higher = stricter matching." IsSnapToTickEnabled="True" TickFrequency="1" />
+                            <!-- Percentage display -->
+                            <Border Background="{DynamicResource ControlBackground}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="10" Padding="8,2">
+                                <TextBlock Name="MaxDistanceText" Text="84%" Foreground="{DynamicResource WindowForeground}" FontWeight="SemiBold" />
+                            </Border>
+                        </StackPanel>
+                    </Border>
 
-                    <TextBlock Name="StatusText" Text="" Foreground="{DynamicResource MutedForeground}" FontSize="12" VerticalAlignment="Center" Margin="16,0,0,0" TextWrapping="Wrap" MaxWidth="240" />
+                    <TextBlock Name="StatusText" Text="" Foreground="{DynamicResource MutedForeground}" FontSize="12" VerticalAlignment="Center" Margin="8,0,0,0" TextWrapping="Wrap" MaxWidth="240" Visibility="Collapsed" />
+                    <TextBlock Name="ProgressLabel" Text="Progress" Foreground="{DynamicResource MutedForeground}" FontSize="11" VerticalAlignment="Center" Margin="8,0,6,0" Visibility="Collapsed" />
+                    <Grid Name="SimilarScanProgressBarContainer" Width="150" Height="10" Visibility="Collapsed" VerticalAlignment="Center" Margin="0,0,4,0">
+                        <Border Background="{DynamicResource SidebarBackground}" CornerRadius="5" BorderBrush="#4B5563" BorderThickness="1" />
+                        <Border Name="SimilarScanProgressIndicator" Background="{DynamicResource ScanButtonBrush}" CornerRadius="4" Width="0" HorizontalAlignment="Left" Margin="1" />
+                    </Grid>
+                    <TextBlock Name="SimilarScanProgressText" Text="0%" Foreground="{DynamicResource MutedForeground}" FontSize="11" VerticalAlignment="Center" Margin="4,0,12,0" Visibility="Collapsed" />
+                    <TextBlock Name="SimilarScanTimerText" Text="00:00" Foreground="{DynamicResource MutedForeground}" FontSize="11" VerticalAlignment="Center" Visibility="Collapsed" FontFamily="Consolas" FontWeight="SemiBold" />
                 </StackPanel>
 
-                <Button Name="DeleteSimilarSelectedButton" Grid.Column="1" Click="DeleteSimilarSelectedButton_Click" Style="{StaticResource DangerButton}" Padding="20,8" Height="40" HorizontalAlignment="Right">Delete</Button>
+                <Button Name="ScanSimilarButton" Grid.Column="1" Click="ScanSimilarButton_Click" Style="{StaticResource PrimaryButton}" Padding="20,8" Height="40" HorizontalAlignment="Right">Scan</Button>
             </Grid>
         </Border>
 
@@ -60,7 +135,7 @@
         <!-- Main content: groups (left) -->
         <Border Grid.Row="2" Grid.Column="0" Background="{DynamicResource AppBackground}" CornerRadius="8" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" Padding="8" Margin="16,8,8,8">
             <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                <ItemsControl Name="SimilarGroupsItemsControl" ItemsSource="{Binding}">
+                <ItemsControl Name="SimilarGroupsItemsControl" ItemsSource="{Binding}" Visibility="Collapsed">
                     <ItemsControl.ItemsPanel>
                         <ItemsPanelTemplate><StackPanel /></ItemsPanelTemplate>
                     </ItemsControl.ItemsPanel>
@@ -74,7 +149,7 @@
                                     </ItemsControl.ItemsPanel>
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>
-                                            <Border Width="80" Height="80" CornerRadius="4" Background="{DynamicResource ControlBackground}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="2" Margin="4" Cursor="Hand"
+                                                <Border Width="80" Height="80" CornerRadius="4" Background="{DynamicResource ControlBackground}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="2" Margin="4" Cursor="Hand"
                                                     MouseLeftButtonDown="Thumbnail_MouseDown" MouseEnter="Thumbnail_MouseEnter">
                                                 <Border.Style>
                                                     <Style TargetType="Border">
@@ -90,11 +165,17 @@
                                                 </Border.Style>
                                                 <Grid>
                                                     <Image Source="{Binding Thumbnail}" Stretch="UniformToFill" />
+                                                    <Border Name="SelectedOverlay" Background="#66FF0000" CornerRadius="4" Visibility="Collapsed" IsHitTestVisible="False" />
                                                 </Grid>
                                                 <Border.ToolTip>
                                                     <ToolTip Content="{Binding FileName}" />
                                                 </Border.ToolTip>
                                             </Border>
+                                            <DataTemplate.Triggers>
+                                                <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                                                    <Setter TargetName="SelectedOverlay" Property="Visibility" Value="Visible" />
+                                                </DataTrigger>
+                                            </DataTemplate.Triggers>
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>
                                 </ItemsControl>
@@ -106,7 +187,7 @@
         </Border>
 
         <!-- Empty placeholder for no groups (left) -->
-        <Grid Name="NoSimilarPlaceholder" Grid.Row="2" Grid.Column="0" IsHitTestVisible="False" Background="{DynamicResource AppBackground}" Margin="16,8,8,8" Visibility="Collapsed">
+        <Grid Name="NoSimilarPlaceholder" Grid.Row="2" Grid.Column="0" IsHitTestVisible="False" Background="{DynamicResource AppBackground}" Margin="16,8,8,8" Visibility="Visible">
             <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Opacity="0.75">
                 <Border Width="44" Height="44" CornerRadius="22" Background="{DynamicResource ControlBackground}" Margin="0,0,0,8">
                     <TextBlock Text="🖼" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="24" />
@@ -122,7 +203,7 @@
                 <StackPanel>
                     <TextBlock Text="Preview" FontSize="14" FontWeight="SemiBold" Foreground="{DynamicResource WindowForeground}" Margin="0,0,0,12" />
                     <Border Width="350" Height="250" Background="{DynamicResource ControlBackground}" CornerRadius="4" ClipToBounds="True" Margin="0,0,0,12">
-                        <Image Name="PreviewImage" Stretch="UniformToFill" />
+                        <Image Name="PreviewImage" Stretch="Uniform" />
                     </Border>
                     <StackPanel Name="PreviewInfoPanel" Margin="0,0,0,16">
                         <TextBlock Name="PreviewFileName" Text="No image selected" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource WindowForeground}" TextWrapping="Wrap" Margin="0,0,0,8" />
@@ -133,7 +214,6 @@
                     </StackPanel>
                     <StackPanel Orientation="Vertical" VerticalAlignment="Bottom">
                         <Button Name="ViewImageButton" Click="ViewImageButton_Click" Style="{StaticResource SecondaryButton}" Padding="16,8" Height="36" Margin="0,0,0,8">Open Image</Button>
-                        <Button Name="ToggleSelectButton" Click="ToggleSelectButton_Click" Style="{StaticResource SecondaryButton}" Padding="16,8" Height="36">Mark for Deletion</Button>
                     </StackPanel>
                 </StackPanel>
             </ScrollViewer>

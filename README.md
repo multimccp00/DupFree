@@ -1,77 +1,77 @@
-# DupFree - Duplicate File Finder
+# DupFree
 
-> **Work in Progress**: This project is actively being developed.
-
-A modern Windows desktop application for finding and managing duplicate files with image preview capabilities and multiple view modes.
+A Windows desktop application for finding duplicate files and visually similar images, built with C# (.NET 8) and WPF.
 
 ## Features
 
-- **Duplicate Detection**: Fast SHA256-based file hashing to find exact duplicates
-- **Image Preview**: Preview images, GIFs, WebPs, and other image formats
-- **Multiple View Modes**:
-  - Icon View (small thumbnails)
-  - Large Icon View (with file info)
-  - List View (detailed file information)
-- **Sorting Options**: Sort by Name, Size, Modified Date, or Path
-- **Side-by-Side Display**: Duplicate files displayed together for easy comparison
-- **Wasted Space Calculation**: Shows how much disk space can be freed per duplicate group
-- **Progress Tracking**: Real-time status updates during scanning
+- **Duplicate File Detection** — Finds files with matching names and sizes across directories
+- **Similar Image Detection** — Perceptual hashing + GPU-accelerated SSIM comparison
+- **Dark Theme UI** — Modern dark interface with collapsible sidebar navigation
+- **Multiple View Modes** — List (DataGrid) and Grid (thumbnail) views
+- **In-App Recycle Bin** — Delete with undo via restore functionality
+- **Persistent Settings** — Preferences saved to `%AppData%/DupFree/settings.json`
+- **Search & Filter** — Filter by filename, minimum size, and scan limits
+- **Auto-Select** — Automatically mark lower-quality similar images for deletion
 
-## Installation
+## Requirements
 
-1. Ensure you have .NET 8.0 or later installed
-2. Clone or extract the project files
-3. Build the project:
-   ```
-   dotnet build
-   ```
+- Windows 10/11
+- .NET 8 SDK
+- GPU with DirectX 11 support (optional, for accelerated SSIM)
 
-## Usage
+## Getting Started
 
-1. Launch the application
-2. Click "Browse" to select a folder to scan for duplicates
-3. Click "Scan" to start the duplicate detection process
-4. Use the view buttons to change between Icon, Large Icon, and List views
-5. Use the Sort dropdown to organize results
-6. Click group headers to expand/collapse duplicate groups
+```bash
+dotnet restore
+dotnet build
+dotnet run
+```
+
+Or open `Dupfree.sln` in Visual Studio 2022 and press F5.
 
 ## Project Structure
 
 ```
 DupFree/
-├── Services/
-│   ├── FileHashService.cs       - File hashing utilities
-│   ├── DuplicateSearchService.cs - Duplicate detection logic
-│   └── ImagePreviewService.cs   - Image thumbnail generation
+├── App.xaml / App.xaml.cs          # Application entry, themes, exception handling
 ├── Models/
-│   └── FileItemViewModel.cs     - Data models for files and groups
-├── Views/
-│   └── MainWindow.xaml(.cs)     - Main UI
-├── App.xaml(.cs)                - Application entry point
-└── DupFree.csproj               - Project configuration
+│   └── FileItemViewModel.cs        # ViewModels for files, groups, similar images
+├── Services/
+│   ├── DuplicateSearchService.cs   # Duplicate detection (name+size grouping)
+│   ├── SimilarImageService.cs      # Similar image detection (pHash + SSIM)
+│   ├── GpuSsim.cs                  # GPU SSIM via D3D11 compute shaders
+│   ├── PhashIndex.cs               # Persistent hash cache with BK-tree
+│   ├── ImagePreviewService.cs      # Thumbnail generation
+│   └── SettingsService.cs          # Settings persistence
+└── Views/
+    ├── MainWindow.xaml / .cs       # Main window and duplicate-file UI
+    └── SimilarImagesPanel.xaml / .cs  # Similar images panel with preview
 ```
 
-## How It Works
+## Technology
 
-1. **File Collection**: Recursively collects all files from selected directories
-2. **Size Grouping**: Groups files by size (first optimization)
-3. **Hash Computation**: Computes SHA256 hash for files with duplicate sizes
-4. **Duplicate Detection**: Groups files with identical hashes
-5. **Visualization**: Displays duplicates with previews and file information
+| Component | Technology |
+|-----------|-----------|
+| Framework | .NET 8 (net8.0-windows), WPF |
+| Image Processing | Magick.NET, System.Drawing.Common |
+| GPU Compute | Vortice.Direct3D11, D3DCompiler (HLSL) |
+| Dialogs | Ookii.Dialogs.Wpf |
 
-## Performance
+## Documentation
 
-- Quick pre-filtering by file size reduces unnecessary hash computations
-- Asynchronous operations keep UI responsive during scanning
-- Efficient thumbnail generation for image previews
-- Progress reporting for user feedback
+| Document | Description |
+|----------|-------------|
+| [PROJECT_SUMMARY.md](PROJECT_SUMMARY.md) | Detailed feature overview and technical summary |
+| [QUICKSTART.md](QUICKSTART.md) | Quick start guide for new users |
+| [USAGE_GUIDE.md](USAGE_GUIDE.md) | Comprehensive usage instructions |
+| [DEVELOPMENT.md](DEVELOPMENT.md) | Development guide for contributors |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | System architecture and design decisions |
 
-## Future Enhancements
+## Version
 
-- Compare files before deletion
-- Custom file filter options
-- Export duplicate reports
-- Settings for hash algorithm selection
-- Recycle Bin support to undo delete operations
-- Continued UI polish for a clean, modern experience
-- Additional user options and customization
+**v1.1** — In Development  
+**Author**: Miguel Campos
+
+## License
+
+All rights reserved.

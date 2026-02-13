@@ -8,12 +8,26 @@
     <AssemblyName>DupFree</AssemblyName>
     <RootNamespace>DupFree</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="Magick.NET-Q16-AnyCPU" Version="14.10.2" />
     <PackageReference Include="System.Drawing.Common" Version="8.0.0" />
     <PackageReference Include="Ookii.Dialogs.Wpf" Version="2.1.0" />
+    <PackageReference Include="Vortice.Direct3D11" Version="3.2.0" />
+    <PackageReference Include="Vortice.DXGI" Version="3.2.0" />
+    <PackageReference Include="Vortice.D3DCompiler" Version="3.2.0" />
+    <PackageReference Include="Vortice.Mathematics" Version="2.1.0" />
+  </ItemGroup>
+
+  <!-- Exclude the Tools subfolder from compilation -->
+  <ItemGroup>
+    <Compile Remove="Tools\**" />
+    <None Remove="Tools\**" />
+    <Content Remove="Tools\**" />
+    <EmbeddedResource Remove="Tools\**" />
   </ItemGroup>
 
 </Project>

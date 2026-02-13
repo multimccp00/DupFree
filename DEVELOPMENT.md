@@ -1,548 +1,188 @@
-# DupFree - Development & Contribution Guide
+# DupFree - Development Guide
 
-## Development Setup
+## Prerequisites
 
-### Environment Requirements
-- **OS**: Windows 10 or later
-- **IDE**: Visual Studio Code or Visual Studio 2022
-- **.NET**: SDK 8.0 or later
-- **Git**: For version control (optional)
+- **Windows 10/11**
+- **.NET 8 SDK** — [Download](https://dotnet.microsoft.com/download/dotnet/8.0)
+- **Visual Studio 2022** (recommended) or VS Code with C# Dev Kit
+- **GPU with DirectX 11** (optional, for accelerated SSIM)
 
-### Initial Setup
-```powershell
-# Clone repository
+## Setup
+
+```bash
+# Clone the repository
 git clone <repo-url>
 cd DupFree
 
 # Restore NuGet packages
 dotnet restore
 
-# Build project
+# Build the project
 dotnet build
 
-# Run tests (if available)
-dotnet test
+# Run in debug mode
+dotnet run --configuration Debug
+```
 
-# Run application
-dotnet run
+### Visual Studio
+1. Open `Dupfree.sln`
+2. Set DupFree as the startup project
+3. Press F5 to build and run
+
+---
+
+## NuGet Dependencies
+
+| Package | Version | Purpose |
+|---------|---------|---------|
+| Magick.NET-Q16-AnyCPU | 14.10.2 | ImageMagick bindings for SSIM comparison and image processing |
+| System.Drawing.Common | 8.0.0 | GDI+ APIs for tile hashing and pixel-level operations |
+| Ookii.Dialogs.Wpf | 2.1.0 | Native Windows Vista-style folder browser dialog |
+| Vortice.Direct3D11 | 3.2.0 | Direct3D 11 device/context for GPU compute shaders |
+| Vortice.DXGI | 3.2.0 | DXGI factory/adapter support (required by Vortice.Direct3D11) |
+| Vortice.D3DCompiler | 3.2.0 | Runtime HLSL shader compilation |
+| Vortice.Mathematics | 2.1.0 | Math/vector types for Vortice interop |
+
+---
+
+## Project Structure
+
+```
+DupFree/
+├── App.xaml                        # Application resources, themes, styles
+├── App.xaml.cs                     # Startup/exit lifecycle, global exception handlers
+├── DupFree.csproj                  # .NET 8 project file, NuGet references
+├── app.manifest                    # Windows application manifest (DPI, UAC)
+├── Models/
+│   └── FileItemViewModel.cs        # ViewModels (FileItem, DuplicateGroup, SimilarGroup)
+├── Services/
+│   ├── DuplicateSearchService.cs   # Duplicate detection via name+size grouping
+│   ├── SimilarImageService.cs      # Similar image detection (pHash + SSIM composite)
+│   ├── GpuSsim.cs                  # GPU SSIM via D3D11 compute shaders + CPU SIMD fallback
+│   ├── PhashIndex.cs               # Persistent perceptual hash cache with BK-tree
+│   ├── ImagePreviewService.cs      # Thumbnail generation and format detection
+│   └── SettingsService.cs          # Settings persistence (%AppData%/DupFree/settings.json)
+└── Views/
+    ├── MainWindow.xaml             # Main window layout (sidebar, panels, footer)
+    ├── MainWindow.xaml.cs          # Main window code-behind (scan, display, navigation)
+    ├── SimilarImagesPanel.xaml     # Similar images UserControl layout
+    └── SimilarImagesPanel.xaml.cs  # Similar images scan logic and UI
 ```
 
 ---
 
-## Project Architecture
+## Key Services
 
-### Layered Architecture
-```
-┌─────────────────────────────────────┐
-│   Presentation (XAML/WPF)           │
-│   - Views/MainWindow.xaml(.cs)      │
-└────────────────┬────────────────────┘
-                 ↓
-┌─────────────────────────────────────┐
-│   ViewModel Layer                   │
-│   - Models/FileItemViewModel.cs     │
-└────────────────┬────────────────────┘
-                 ↓
-┌─────────────────────────────────────┐
-│   Service Layer                     │
-│   - DuplicateSearchService          │
-│   - FileHashService                 │
-│   - ImagePreviewService             │
-└────────────────┬────────────────────┘
-                 ↓
-┌─────────────────────────────────────┐
-│   Data Layer                        │
-│   - File I/O & System APIs          │
-└─────────────────────────────────────┘
-```
+### DuplicateSearchService
+- Groups files by **(filename, size)** pairs
+- Recursive BFS directory traversal (max depth 100)
+- Filters hidden/system/reparse-point files
+- Supports cancellation and progress reporting
+- Configurable file count limits
 
----
+### SimilarImageService
+- 2-phase detection: fast perceptual hash pre-filter → SSIM verification
+- Composite scoring: **65% SSIM + 15% hash + 10% histogram + 10% composition**
+- BK-tree index for O(log n) Hamming-distance neighbor queries
+- Tile hashing (3×3 grid) for spatial similarity
+- Parallelized hash computation across all CPU cores
+- Progressive streaming of grouped results via events
+- Persistent `phash_index.json` cache (only recomputes for modified files)
 
-## Code Organization
+### GpuSsim
+- **GPU path**: Direct3D 11 compute shader (HLSL) for parallel SSIM
+  - Images uploaded as `R32_Float` textures (128×128 grayscale)
+  - Results read back via staging buffer
+  - Thread-safe with lock
+- **CPU fallback**: SIMD-accelerated using `System.Numerics.Vector<float>`
+- SSIM constants: K1=0.01, K2=0.03, L=1.0
 
-### Services/ Directory
-**Purpose**: Business logic and core functionality
+### PhashIndex
+- Persistent cache file: `phash_index.json`
+- Stores: file path, length, last-write time, hash bytes, packed hash
+- BK-tree for fast Hamming-distance range queries
+- Tile hash inverted index for spatial matching
+- Incremental updates: only new/modified files recomputed
 
-**Files**:
-- `DuplicateSearchService.cs`: Core duplicate detection algorithm
-- `FileHashService.cs`: Cryptographic hashing operations
-- `ImagePreviewService.cs`: Image handling and thumbnails
+### SettingsService
+- Static service with `OnSettingsChanged` event
+- JSON persistence via `System.Text.Json`
+- Settings file location: `%AppData%/DupFree/settings.json`
+- Loaded in `App.OnStartup()`, saved in `App.OnExit()`
 
-**Adding a New Service**:
-1. Create `IMyService.cs` interface (optional but recommended)
-2. Create `MyService.cs` implementing the interface
-3. Register in MainWindow.xaml.cs
-4. Inject where needed
-
-### Models/ Directory
-**Purpose**: Data structures and ViewModels
-
-**Files**:
-- `FileItemViewModel.cs`: UI data model for individual files and groups
-
-**ViewModel Pattern**:
-```csharp
-public class FileItemViewModel : INotifyPropertyChanged
-{
-    private string _fileName;
-    
-    public string FileName
-    {
-        get => _fileName;
-        set
-        {
-            if (_fileName != value)
-            {
-                _fileName = value;
-                OnPropertyChanged(nameof(FileName));
-            }
-        }
-    }
-    
-    public event PropertyChangedEventHandler PropertyChanged;
-    
-    protected void OnPropertyChanged(string propertyName)
-    {
-        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
-    }
-}
-```
-
-### Views/ Directory
-**Purpose**: UI presentation and user interaction
-
-**Files**:
-- `MainWindow.xaml`: UI markup
-- `MainWindow.xaml.cs`: Code-behind with event handlers
-
-**View Modes** in `MainWindow.xaml.cs`:
-- `CreateIconView()`: 120×120 compact view
-- `CreateLargeIconView()`: 180×180 detailed view
-- `CreateListView()`: Spreadsheet-style view
+### ImagePreviewService
+- Generates thumbnails (max 256×256) using `BitmapImage`
+- Supports: JPG, JPEG, PNG, BMP, GIF, WebP, TIFF, ICO
+- `FormatFileSize()` with configurable unit display
+- Uses `OnLoad` cache mode and `Freeze()` for thread safety
 
 ---
 
-## Key Algorithms
+## UI Architecture
 
-### Duplicate Detection Algorithm
-```
-Input: List of directories
-Output: List of duplicate groups
+### Themes and Styles (App.xaml)
+- Full dark theme with 30+ color resources
+- Custom control templates for: Button (5 variants), CheckBox, ComboBox, DataGrid, ScrollBar, TextBox, Window
+- Color palette matches React/Tailwind dark design conventions
 
-1. COLLECT_FILES(directories)
-   for each directory:
-       recursively add all files to collection
+### MainWindow
+- **Dark title bar** via DWM API (`DwmSetWindowAttribute`)
+- **Sidebar**: 6 toggle buttons controlling panel visibility
+- **Panels**: Scan, Results, Similar Images, Recycle Bin, Settings, Help
+- **View modes**: DataGrid (list) and WrapPanel/Canvas (grid with virtual scrolling)
+- **Keyboard navigation**: Arrow keys, Enter, Delete in grid view
 
-2. GROUP_BY_SIZE(files)
-   filter groups with count >= 2
-   (optimization: eliminates most files)
-
-3. COMPUTE_HASHES(size_groups)
-   for each file in size groups:
-       hash = SHA256(file_content)
-       add to hash_map[hash].Add(file)
-
-4. CREATE_GROUPS(hash_map)
-   for each hash with count >= 2:
-       create DuplicateFileGroup
-       
-5. RETURN duplicate_groups
-```
-
-### Time Complexity Analysis
-- Directory traversal: O(n) where n = file count
-- Size grouping: O(n log n)
-- Hashing: O(m × s) where m = duplicate candidates, s = file size
-- Overall: O(n log n + m × s)
-
-### Optimization Strategies
-1. **Two-pass approach**: Size filter before expensive hashing
-2. **Early filtering**: Skip size groups with only 1 file
-3. **Error handling**: Continue on access denied
-4. **Async operations**: Non-blocking UI during scanning
+### SimilarImagesPanel (UserControl)
+- Similarity slider (75–99%) with custom round thumb template
+- Custom progress bar (Grid with track + fill Borders)
+- Optional elapsed-time timer (DispatcherTimer)
+- Left: scrollable group thumbnails (80×80) with red border selection
+- Right: 350×250 preview with file info and Open Image button
 
 ---
 
-## Code Style Guidelines
+## Building for Release
 
-### Naming Conventions
-```csharp
-// Classes: PascalCase
-public class DuplicateSearchService { }
-
-// Methods: PascalCase
-public async Task<List<DuplicateFileGroup>> FindDuplicatesAsync() { }
-
-// Properties: PascalCase
-public string FileName { get; set; }
-
-// Private fields: _camelCase
-private List<string> _selectedDirectories;
-
-// Local variables: camelCase
-var fileCount = files.Count;
-
-// Constants: UPPER_SNAKE_CASE
-private const int DEFAULT_TIMEOUT = 5000;
+```bash
+dotnet publish -c Release -r win-x64 --self-contained true
 ```
 
-### Code Structure
-```csharp
-// Order of class members:
-// 1. Fields (private, protected, public)
-// 2. Properties
-// 3. Constructors
-// 4. Public methods
-// 5. Private methods
-// 6. Events
-```
-
-### Comments & Documentation
-```csharp
-/// <summary>
-/// Finds duplicate files in the specified directories.
-/// </summary>
-/// <param name="directories">List of directory paths to scan</param>
-/// <param name="progress">Optional progress reporter</param>
-/// <returns>List of duplicate file groups</returns>
-public async Task<List<DuplicateFileGroup>> FindDuplicatesAsync(
-    List<string> directories, 
-    IProgress<(int current, int total)> progress = null)
-{
-    // Implementation
-}
-```
+Output will be in `bin/Release/net8.0-windows/win-x64/publish/`.
 
 ---
 
 ## Common Development Tasks
 
-### Adding a New View Mode
+### Adding a New Setting
+1. Add property and setter in `SettingsService.cs`
+2. Add to the `SaveToFile()` anonymous object
+3. Add `TryGetProperty` read in `LoadFromFile()`
+4. Add UI control in the Settings section of `MainWindow.xaml`
+5. Wire up the control event handler in `MainWindow.xaml.cs`
 
-1. **Add button in MainWindow.xaml**:
-```xaml
-<Button Name="NewViewButton" Click="NewViewButton_Click" Padding="8,5">
-    🆕
-</Button>
-```
+### Adding a New Sidebar Panel
+1. Add a ToggleButton in the sidebar section of `MainWindow.xaml`
+2. Create the panel content (Grid/StackPanel) in the main content area
+3. Add the panel to the `ShowPanel()` method in `MainWindow.xaml.cs`
+4. Wire up the sidebar button click handler
 
-2. **Create render method in MainWindow.xaml.cs**:
-```csharp
-private FrameworkElement CreateNewView(FileItemViewModel file)
-{
-    var panel = new StackPanel { /* ... */ };
-    // Layout logic here
-    return panel;
-}
-```
-
-3. **Update DisplayResults() method**:
-```csharp
-if (_currentViewMode == "new_mode")
-{
-    foreach (var file in group.Files)
-        itemsPanel.Children.Add(CreateNewView(file));
-}
-```
-
-4. **Add button handler**:
-```csharp
-private void NewViewButton_Click(object sender, RoutedEventArgs e)
-{
-    _currentViewMode = "new_mode";
-    DisplayResults();
-}
-```
-
-### Adding Image Format Support
-
-1. **Update ImagePreviewService.cs**:
-```csharp
-private static readonly string[] ImageExtensions = 
-{ 
-    ".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp", ".tiff", ".ico",
-    ".svg", ".webm"  // Add new formats here
-};
-```
-
-2. Test with sample files
-
-### Adding Sort Option
-
-1. **Update XAML ComboBox**:
-```xaml
-<ComboBox Name="SortComboBox">
-    <ComboBoxItem>Name</ComboBoxItem>
-    <ComboBoxItem>Size</ComboBoxItem>
-    <ComboBoxItem>New Option</ComboBoxItem>
-</ComboBox>
-```
-
-2. **Add case in SortComboBox_SelectionChanged()**:
-```csharp
-case "New Option":
-    group.Files.Sort((a, b) => a.NewProperty.CompareTo(b.NewProperty));
-    break;
-```
-
-### Adding Async Task
-
-```csharp
-// Always use async pattern for I/O operations
-private async void ScanButton_Click(object sender, RoutedEventArgs e)
-{
-    var results = await _searchService.FindDuplicatesAsync(_selectedDirectories);
-    DisplayResults();
-}
-```
+### Modifying the Similar Image Algorithm
+- Threshold constants are at the top of `SimilarImageService.cs`
+- Composite weights: `CompositeWeightSsim`, `CompositeWeightHash`, `CompositeWeightHist`, `CompositeWeightComp`
+- Hash distance threshold: `HashDistanceThreshold`
+- BK-tree query radius is derived from the threshold
 
 ---
 
-## Error Handling Best Practices
+## Debugging
 
-### File Operations
-```csharp
-try
-{
-    using (var fileStream = File.OpenRead(filePath))
-    {
-        var hash = sha256.ComputeHash(fileStream);
-        return Convert.ToHexString(hash);
-    }
-}
-catch (UnauthorizedAccessException)
-{
-    // Log and skip this file
-    return null;
-}
-catch (IOException)
-{
-    // File locked or busy
-    return null;
-}
-catch (Exception ex)
-{
-    // Unexpected error
-    Debug.WriteLine($"Error hashing {filePath}: {ex.Message}");
-    return null;
-}
+### Crash Logs
+Global exception handlers write crash details to:
+```
+%TEMP%/dupfree_crash.log
 ```
 
-### UI Event Handlers
-```csharp
-private void Button_Click(object sender, RoutedEventArgs e)
-{
-    try
-    {
-        // Button logic
-    }
-    catch (Exception ex)
-    {
-        MessageBox.Show($"Error: {ex.Message}", "Error", 
-            MessageBoxButton.OK, MessageBoxImage.Error);
-    }
-}
-```
-
----
-
-## Testing Strategy
-
-### Unit Test Example
-```csharp
-[TestClass]
-public class FileHashServiceTests
-{
-    [TestMethod]
-    public async Task GetFileHashAsync_ReturnsSameHash_ForIdenticalFiles()
-    {
-        // Arrange
-        var file1 = "test1.bin";
-        var file2 = "test2.bin";
-        
-        // Act
-        var hash1 = await FileHashService.GetFileHashAsync(file1);
-        var hash2 = await FileHashService.GetFileHashAsync(file2);
-        
-        // Assert
-        Assert.AreEqual(hash1, hash2);
-    }
-}
-```
-
-### Integration Test Example
-```csharp
-[TestMethod]
-public async Task FindDuplicatesAsync_FindsCorrectDuplicates()
-{
-    // Arrange
-    var service = new DuplicateSearchService();
-    var testDir = "TestData/";
-    
-    // Act
-    var results = await service.FindDuplicatesAsync(
-        new List<string> { testDir });
-    
-    // Assert
-    Assert.IsTrue(results.Count > 0);
-    Assert.IsTrue(results[0].Files.Count >= 2);
-}
-```
-
----
-
-## Performance Optimization Tips
-
-### Profiling
-```powershell
-# Build in Release mode for accurate profiling
-dotnet build -c Release
-
-# Use Visual Studio Performance Profiler
-# Debug → Performance Profiler → CPU Usage
-```
-
-### Memory Optimization
-- Use `using` statements for file streams
-- Clear thumbnail cache periodically
-- Dispose of BitmapImage when not needed
-
-### Speed Optimization
-- Pre-filter by file size before hashing
-- Use async/await for non-blocking operations
-- Consider caching hash results
-- Parallelize hash computation with Parallel.ForEach
-
----
-
-## Dependencies
-
-### Current NuGet Packages
-```xml
-<ItemGroup>
-    <PackageReference Include="System.Drawing.Common" Version="8.0.0" />
-    <PackageReference Include="Ookii.Dialogs.Wpf" Version="3.0.0" />
-</ItemGroup>
-```
-
-### Why These Packages?
-- **System.Drawing.Common**: Image processing APIs
-- **Ookii.Dialogs.Wpf**: Native Windows folder picker dialog
-
-### Adding New Dependencies
-```powershell
-dotnet add package PackageName --version 1.0.0
-```
-
----
-
-## Build & Deployment
-
-### Debug Build
-```powershell
-dotnet build -c Debug
-```
-
-### Release Build
-```powershell
-dotnet build -c Release
-```
-
-### Publish Self-Contained
-```powershell
-dotnet publish -c Release -r win-x64 --self-contained
-```
-
-### Create Installer (Future)
-Can use tools like:
-- WiX Toolset
-- Advanced Installer
-- NSIS
-
----
-
-## Git Workflow
-
-### Feature Development
-```bash
-# Create feature branch
-git checkout -b feature/new-view-mode
-
-# Make changes
-git add .
-git commit -m "Add new view mode"
-
-# Push and create PR
-git push origin feature/new-view-mode
-```
-
-### Commit Message Format
-```
-feat: Add new feature
-fix: Fix bug description
-docs: Update documentation
-refactor: Restructure code
-test: Add tests
-perf: Improve performance
-```
-
----
-
-## Future Enhancement Ideas
-
-- [ ] Delete files with safety confirmation
-- [ ] Comparison viewer for duplicate files
-- [ ] Export results to CSV/PDF
-- [ ] Custom file type filters
-- [ ] Scheduled scanning
-- [ ] Multi-threaded hashing
-- [ ] Database backend for results
-- [ ] Cloud storage support
-- [ ] Undo/recovery mechanism
-- [ ] Settings/preferences UI
-
----
-
-## Troubleshooting Development
-
-### Build Fails
-```powershell
-# Clean and rebuild
-dotnet clean
-dotnet build
-
-# Or clear NuGet cache
-dotnet nuget locals all --clear
-dotnet restore
-```
-
-### Dependencies Not Found
-```powershell
-# Update packages
-dotnet package update
-
-# Or manually restore
-dotnet restore
-```
-
-### IDE Not Showing IntelliSense
-- Restart Visual Studio / VS Code
-- Reload the workspace
-- Run `dotnet restore`
-
----
-
-## Release Checklist
-
-- [ ] All tests passing
-- [ ] Code reviewed
-- [ ] Documentation updated
-- [ ] Performance tested
-- [ ] Version number bumped
-- [ ] Release notes written
-- [ ] Build succeeds in Release mode
-- [ ] Installer created (if applicable)
-
----
-
-**Happy coding! 💻**
+### Diagnostic Output
+- `DuplicateSearchService` writes diagnostic logs to file during scanning
+- Use `System.Diagnostics.Debug.WriteLine` statements (visible in VS Debug Output)
+- Enable the scan timer in Settings to see elapsed time for similar image scans

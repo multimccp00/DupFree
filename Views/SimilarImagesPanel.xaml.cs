@@ -21,7 +21,8 @@ namespace DupFree.Views
         private List<string> _currentDirectories = new();
         private CancellationTokenSource _scanCancellation;
         private bool _isScanning = false;
-        private string _lastDistanceReport = "";
+        private DateTime _scanStartTime;
+        private System.Windows.Threading.DispatcherTimer _timerDisplay;
 
         public SimilarImagesPanel()
         {
@@ -34,6 +35,11 @@ namespace DupFree.Views
             // Setup event handlers
             _similarImageService.OnStatusChanged += (status) => Dispatcher.Invoke(() => UpdateStatus(status));
             _similarImageService.OnProgressChanged += (progress) => Dispatcher.Invoke(() => UpdateProgress(progress));
+            
+            // Timer for elapsed time display (disabled by default)
+            _timerDisplay = new System.Windows.Threading.DispatcherTimer();
+            _timerDisplay.Interval = TimeSpan.FromMilliseconds(100);
+            _timerDisplay.Tick += (s, e) => UpdateTimerDisplay();
             
             // Monitor for selection changes
             _similarGroups.CollectionChanged += (s, e) =>
@@ -101,14 +107,36 @@ namespace DupFree.Views
 
             if (_currentDirectories.Count == 0)
             {
-                MessageBox.Show("Please select directories first.", "No Directories", MessageBoxButton.OK, MessageBoxImage.Information);
-                return;
+                var mainWindow = Window.GetWindow(this) as MainWindow;
+                if (mainWindow != null)
+                {
+                    if (!mainWindow.TrySelectDirectories(autoScan: false))
+                        return;
+                }
+                else
+                {
+                    MessageBox.Show("Please select directories first.", "No Directories", MessageBoxButton.OK, MessageBoxImage.Information);
+                    return;
+                }
             }
 
             _scanCancellation = new CancellationTokenSource();
             _isScanning = true;
             ScanSimilarButton.Content = "Stop";
-            StatusText.Text = "Scanning...";
+            StatusText.Text = "";
+            SimilarScanProgressIndicator.Width = 0;
+            SimilarScanProgressText.Text = "0%";
+            SimilarScanProgressBarContainer.Visibility = Visibility.Visible;
+            SimilarScanProgressText.Visibility = Visibility.Visible;
+            ProgressLabel.Visibility = Visibility.Visible;
+            // Show/hide timer based on SettingsService (or default to hidden)
+            bool showTimer = SettingsService.GetShowScanTimer();
+            SimilarScanTimerText.Visibility = showTimer ? Visibility.Visible : Visibility.Collapsed;
+            if (showTimer)
+            {
+                _scanStartTime = DateTime.Now;
+                _timerDisplay.Start();
+            }
             _similarGroups.Clear();
             NoSimilarPlaceholder.Visibility = Visibility.Collapsed;
             SimilarGroupsItemsControl.Visibility = Visibility.Visible;
@@ -165,7 +193,7 @@ namespace DupFree.Views
             try
             {
                 double maxDistance = MaxDistanceSlider.Value;
-                StatusText.Text = $"Scanning (SSIM ≥ {maxDistance:F0}%)...";
+                StatusText.Text = "";
 
                 // This now streams groups via events while running
                 var groups = await _similarImageService.FindSimilarImagesAsync(
@@ -173,22 +201,22 @@ namespace DupFree.Views
                     maxDistance,
                     showClosestPairsOnly: false,
                     closestPairCount: 20,
-                    cancellationToken: _scanCancellation.Token
+                    cancellationToken: _scanCancellation.Token,
+                    useGpuSsim: true
                 );
 
                 StatusText.Text = $"Done! Found {_similarGroups.Count} groups";
-                _lastDistanceReport = "";
 
                 NoSimilarPlaceholder.Visibility = _similarGroups.Count > 0 ? Visibility.Collapsed : Visibility.Visible;
                 SimilarGroupsItemsControl.Visibility = _similarGroups.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
             }
             catch (OperationCanceledException)
             {
-                StatusText.Text = $"Stopped. Found {_similarGroups.Count} groups";
+                StatusText.Text = "";
             }
             catch (Exception ex)
             {
-                StatusText.Text = $"Error: {ex.Message}";
+                StatusText.Text = "";
                 MessageBox.Show($"Error scanning: {ex.Message}\n\n{ex.StackTrace}", "Scan Error", MessageBoxButton.OK, MessageBoxImage.Error);
             }
             finally
@@ -198,10 +226,11 @@ namespace DupFree.Views
                 _similarImageService.OnImageAddedToGroup -= onImageAdded;
 
                 _isScanning = false;
+                _timerDisplay.Stop();
                 ScanSimilarButton.Content = "Scan for Similar";
                 ScanSimilarButton.IsEnabled = true;
-                if (string.IsNullOrEmpty(StatusText.Text) || StatusText.Text == "Scanning...")
-                    StatusText.Text = $"Done! Found {_similarGroups.Count} groups";
+                UpdateProgress(100);
+                StatusText.Text = "";
             }
         }
 
@@ -384,13 +413,13 @@ namespace DupFree.Views
 
         private void ViewImageButton_Click(object sender, RoutedEventArgs e)
         {
-            if (sender is Button button && button.DataContext is FileItemViewModel image)
+            if (_selectedForPreview != null)
             {
                 try
                 {
                     System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
                     {
-                        FileName = image.FilePath,
+                        FileName = _selectedForPreview.FilePath,
                         UseShellExecute = true
                     });
                 }
@@ -403,17 +432,24 @@ namespace DupFree.Views
 
         private void UpdateStatus(string status)
         {
-            StatusText.Text = status;
-            // Capture distance reports
-            if (status.Contains("TOP 20"))
-            {
-                _lastDistanceReport = status;
-            }
+            StatusText.Text = "";
         }
 
         private void UpdateProgress(int progress)
         {
-            // Progress updates can be displayed in the parent window
+            if (progress < 0) progress = 0;
+            if (progress > 100) progress = 100;
+            if (SimilarScanProgressBarContainer != null && SimilarScanProgressIndicator != null)
+            {
+                var totalWidth = SimilarScanProgressBarContainer.ActualWidth;
+                if (totalWidth <= 0)
+                    totalWidth = SimilarScanProgressBarContainer.Width;
+                if (double.IsNaN(totalWidth) || totalWidth <= 0)
+                    totalWidth = 150;
+                var availableWidth = Math.Max(0, totalWidth - 2);
+                SimilarScanProgressIndicator.Width = availableWidth * (progress / 100.0);
+            }
+            SimilarScanProgressText.Text = $"{progress}%";
         }
 
         private void UpdateDeleteButtonCount()
@@ -427,6 +463,11 @@ namespace DupFree.Views
             _similarGroups.Clear();
             NoSimilarPlaceholder.Visibility = Visibility.Visible;
             SimilarGroupsItemsControl.Visibility = Visibility.Collapsed;
+            SimilarScanProgressBarContainer.Visibility = Visibility.Collapsed;
+            SimilarScanProgressText.Visibility = Visibility.Collapsed;
+            ProgressLabel.Visibility = Visibility.Collapsed;
+            SimilarScanTimerText.Visibility = Visibility.Collapsed;
+            SimilarScanProgressIndicator.Width = 0;
         }
 
         private void MaxDistanceSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
@@ -484,25 +525,18 @@ namespace DupFree.Views
             {
                 var fileInfo = new FileInfo(fileItem.FilePath);
                 PreviewFileSize.Text = $"Size: {FormatBytes(fileInfo.Length)}";
+                SimilarScanProgressBarContainer.Visibility = Visibility.Collapsed;
+                // Always load full resolution image for preview and real dimensions
+                var bitmapImage = new BitmapImage();
+                bitmapImage.BeginInit();
+                SimilarScanProgressIndicator.Width = 0;
+                bitmapImage.UriSource = new Uri(fileItem.FilePath);
+                bitmapImage.CacheOption = BitmapCacheOption.OnLoad;
+                bitmapImage.EndInit();
+                bitmapImage.Freeze();
 
-                if (fileItem.Thumbnail is BitmapImage bitmap && bitmap.PixelWidth > 0)
-                {
-                    PreviewDimensions.Text = $"Dimensions: {bitmap.PixelWidth}×{bitmap.PixelHeight}";
-                    PreviewImage.Source = bitmap;
-                }
-                else
-                {
-                    // Try to load full resolution image for preview
-                    var bitmapImage = new BitmapImage();
-                    bitmapImage.BeginInit();
-                    bitmapImage.UriSource = new Uri(fileItem.FilePath);
-                    bitmapImage.CacheOption = BitmapCacheOption.OnLoad;
-                    bitmapImage.EndInit();
-                    bitmapImage.Freeze();
-                    
-                    PreviewDimensions.Text = $"Dimensions: {bitmapImage.PixelWidth}×{bitmapImage.PixelHeight}";
-                    PreviewImage.Source = bitmapImage;
-                }
+                PreviewDimensions.Text = $"Dimensions: {bitmapImage.PixelWidth}×{bitmapImage.PixelHeight}";
+                PreviewImage.Source = bitmapImage;
             }
             catch (Exception ex)
             {
@@ -524,13 +558,12 @@ namespace DupFree.Views
             return $"{len:0.##} {sizes[order]}";
         }
 
-        private void ToggleSelectButton_Click(object sender, RoutedEventArgs e)
+        private void UpdateTimerDisplay()
         {
-            if (_selectedForPreview != null)
+            if (_isScanning)
             {
-                _selectedForPreview.IsSelected = !_selectedForPreview.IsSelected;
-                ToggleSelectButton.Content = _selectedForPreview.IsSelected ? "Unmark for Deletion" : "Mark for Deletion";
-                UpdateDeleteButtonCount();
+                TimeSpan elapsed = DateTime.Now - _scanStartTime;
+                SimilarScanTimerText.Text = elapsed.ToString(@"mm\:ss");
             }
         }
 

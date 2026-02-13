@@ -18,9 +18,9 @@
             <Border x:Name="SidebarContent" Background="{DynamicResource SidebarBackground}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,0,1,0">
             <DockPanel LastChildFill="True">
                 <!-- Storage section docked to bottom -->
-                <Border DockPanel.Dock="Bottom" Background="{DynamicResource StorageBackground}" Padding="16" Height="110" CornerRadius="8" Margin="16">
+                <Border DockPanel.Dock="Bottom" Background="{DynamicResource StorageBackground}" Padding="16" Height="104" CornerRadius="8" Margin="16">
                     <StackPanel VerticalAlignment="Center">
-                        <TextBlock Text="Storage" Foreground="{DynamicResource MutedForeground}" FontSize="11" Margin="0,0,0,8" />
+                        <TextBlock x:Name="StorageDriveText" Text="No drive selected" Foreground="{DynamicResource MutedForeground}" FontSize="11" Margin="0,0,0,8" />
                         <Grid Height="8" Margin="0,0,0,8" Width="200" HorizontalAlignment="Left">
                             <Border CornerRadius="4" Background="#374151" />
                             <Border x:Name="StorageIndicator" Width="0" HorizontalAlignment="Left" CornerRadius="4" Background="{DynamicResource BlueBrush}" />
@@ -50,7 +50,7 @@
                     <ToggleButton Name="SidebarScanButton" Click="SidebarScanButton_Click" Style="{StaticResource SidebarToggle}" IsChecked="True" Margin="0,0,0,8" Height="48" Padding="16,12" VerticalContentAlignment="Center">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="🔍" Margin="0,0,12,0" FontSize="16" VerticalAlignment="Center" />
-                            <TextBlock Text="Scanned Files" FontWeight="Medium" VerticalAlignment="Center" />
+                            <TextBlock Text="Duplicate Files" FontWeight="Medium" VerticalAlignment="Center" />
                         </StackPanel>
                     </ToggleButton>
                     <ToggleButton Name="SidebarSimilarImagesButton" Click="SidebarSimilarImagesButton_Click" Style="{StaticResource SidebarToggle}" Margin="0,0,0,8" Height="48" Padding="16,12" VerticalContentAlignment="Center">
@@ -436,14 +436,30 @@
                                         <TextBlock Text="Grid View File Path Display" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,12" />
                                         <TextBlock Text="Show or hide file path below filename in grid view" Foreground="{DynamicResource MutedForeground}" Margin="0,0,0,16" />
                                         
-                                        <CheckBox Name="ShowGridFilePathCheckBox" Content="Show file path below filename" FontSize="14" Margin="0,0,0,16" 
-                                                 Foreground="{DynamicResource WindowForeground}" VerticalAlignment="Center" />
+                                        <CheckBox Name="ShowGridFilePathCheckBox" Content="Show file path below filename" Margin="0,0,0,16"
+                                                  Style="{StaticResource SettingsCheckBox}" VerticalAlignment="Center" />
                                         
                                         <Button Name="SaveGridFilePathButton" Click="SaveGridFilePathButton_Click" Style="{StaticResource PrimaryButton}" Padding="16,10" HorizontalAlignment="Left">
                                             Apply Setting
                                         </Button>
                                     </StackPanel>
                                 </Border>
+
+                                <!-- Scan Timer Debug Section -->
+                                <Border Background="{DynamicResource CardBackground}" CornerRadius="8" Padding="20" Margin="0,0,0,16">
+                                    <StackPanel>
+                                        <TextBlock Text="Scan Timer (Debug)" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,12" />
+                                        <TextBlock Text="Display elapsed time during similar-image scans" Foreground="{DynamicResource MutedForeground}" Margin="0,0,0,16" />
+                                        
+                                        <CheckBox Name="ShowScanTimerCheckBox" Content="Show elapsed time" Margin="0,0,0,16"
+                                                  Style="{StaticResource SettingsCheckBox}" VerticalAlignment="Center" Checked="ShowScanTimerCheckBox_Changed" Unchecked="ShowScanTimerCheckBox_Changed" />
+                                        
+                                        <Button Name="SaveScanTimerButton" Click="SaveScanTimerButton_Click" Style="{StaticResource PrimaryButton}" Padding="16,10" HorizontalAlignment="Left">
+                                            Apply Setting
+                                        </Button>
+                                    </StackPanel>
+                                </Border>
+
                                 
                             </StackPanel>
                         </ScrollViewer>

@@ -62,7 +62,6 @@ namespace DupFree.Models
         public bool IsPreviewable => Services.ImagePreviewService.IsPreviewableImage(FilePath);
         public int DupCount { get; set; }
         public string DupSpace { get; set; }
-        public int DisplayIndex { get; set; }
 
         public static FileItemViewModel FromFileInfo(FileInfo fileInfo, string hash = null, bool loadThumbnail = true)
         {

@@ -21,7 +21,6 @@ namespace DupFree.Services
         private List<DuplicateFileGroup> _duplicates = new();
         public int TotalFilesScanned { get; private set; }
         public event Action<string> OnStatusChanged;
-        public event Action<int> OnProgressChanged;
 
         public async Task<List<DuplicateFileGroup>> FindDuplicatesAsync(List<string> directories, IProgress<(int current, int total)> progress = null, int? maxFilesToProcess = null, System.Threading.CancellationToken cancellationToken = default)
         {
@@ -35,6 +34,7 @@ namespace DupFree.Services
             TotalFilesScanned = 0;
             
             OnStatusChanged?.Invoke("Collecting files...");
+            progress?.Report((0, 100));
 
             // Collect files with error handling
             var allFiles = new ConcurrentBag<FileInfo>();
@@ -46,7 +46,7 @@ namespace DupFree.Services
 
                 try
                 {
-                    CollectFilesSequential(dir, allFiles, cancellationToken);
+                    CollectFilesSequential(dir, allFiles, cancellationToken, progress);
                     OnStatusChanged?.Invoke($"Scanning... {allFiles.Count} files found");
                 }
                 catch (OperationCanceledException)
@@ -101,15 +101,18 @@ namespace DupFree.Services
             }
 
             OnStatusChanged?.Invoke($"Found {filtered.Count} files after filtering. Grouping by name and size...");
+            progress?.Report((70, 100));
 
             if (filtered.Count == 0)
             {
                 OnStatusChanged?.Invoke("No files found (all files filtered)");
+                progress?.Report((100, 100));
                 return _duplicates;
             }
 
             // GROUP BY (SIZE, NAME) - WizTree approach: duplicates have same name and size
             var nameSizeGroups = new Dictionary<(long, string), List<FileInfo>>();
+            int groupingProcessed = 0;
             foreach (var file in filtered)
             {
                 if (cancellationToken.IsCancellationRequested)
@@ -124,9 +127,14 @@ namespace DupFree.Services
                     nameSizeGroups[key] = list;
                 }
                 list.Add(file);
+                groupingProcessed++;
+                // Report progress: 70-90% for grouping phase
+                if (groupingProcessed % 5000 == 0)
+                    progress?.Report((70 + (int)(20.0 * groupingProcessed / filtered.Count), 100));
             }
 
             OnStatusChanged?.Invoke($"Found {nameSizeGroups.Count} unique (name, size) groups. Finding duplicates...");
+            progress?.Report((90, 100));
 
             // Convert to results - files with same name and size are considered duplicates
             _duplicates.Clear();
@@ -172,6 +180,7 @@ namespace DupFree.Services
             }
 
             OnStatusChanged?.Invoke($"Found {_duplicates.Sum(g => g.Files.Count)} duplicate files in {_duplicates.Count} groups");
+            progress?.Report((100, 100));
 
             // Diagnostic: log file counts and sample group keys
             try
@@ -199,7 +208,7 @@ namespace DupFree.Services
         }
 
         // Ultra-simple file collection - no recursion, minimal I/O
-        private void CollectFilesSequential(string rootPath, ConcurrentBag<FileInfo> allFiles, System.Threading.CancellationToken cancellationToken)
+        private void CollectFilesSequential(string rootPath, ConcurrentBag<FileInfo> allFiles, System.Threading.CancellationToken cancellationToken, IProgress<(int current, int total)> progress = null)
         {
             try
             {
@@ -281,9 +290,13 @@ namespace DupFree.Services
                             }
                         }
 
-                        if (statusTimer.ElapsedMilliseconds > 750)
+                        if (statusTimer.ElapsedMilliseconds > 500)
                         {
                             OnStatusChanged?.Invoke($"Collecting files... {fileCount:N0} files, {dirCount:N0} dirs");
+                            // Report collection progress: 0-60% range, estimate based on files found
+                            // Use a logarithmic scale so progress moves even for large directories
+                            int estimatedProgress = Math.Min(60, (int)(60.0 * (1.0 - 1.0 / (1.0 + fileCount / 1000.0))));
+                            progress?.Report((estimatedProgress, 100));
                             statusTimer.Restart();
                         }
 
@@ -324,6 +337,5 @@ namespace DupFree.Services
             }
             catch { }
         }
-        public List<DuplicateFileGroup> GetDuplicates() => _duplicates;
     }
 }

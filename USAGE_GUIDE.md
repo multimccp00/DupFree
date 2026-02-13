@@ -1,231 +1,175 @@
-# DupFree - Duplicate File Finder
+# DupFree - Usage Guide
 
-A modern Windows desktop application for finding and managing duplicate files with advanced features like image preview, multiple view modes, and side-by-side comparison.
+## Table of Contents
+1. [Application Layout](#application-layout)
+2. [Browsing and Scanning](#browsing-and-scanning)
+3. [Viewing Results](#viewing-results)
+4. [Deleting Files](#deleting-files)
+5. [Similar Image Detection](#similar-image-detection)
+6. [Recycle Bin](#recycle-bin)
+7. [Settings](#settings)
+8. [Help Panel](#help-panel)
 
-## 🎯 Key Features
+---
 
-### Duplicate Detection
-- **Fast SHA256-based hashing** to find exact duplicates
-- **Quick pre-filtering** by file size to optimize scanning
-- **Wasted space calculation** showing potential disk recovery per group
-- **Recursive directory scanning** for comprehensive coverage
+## Application Layout
 
-### Image Preview & Visualization
-- **Multiple format support**: JPG, PNG, BMP, GIF, WebP, TIFF, ICO
-- **Thumbnail generation** for quick visual identification
-- **Three view modes**:
-  - **Icon View**: Compact thumbnails with file size
-  - **Large Icon View**: Larger previews with file details
-  - **List View**: Detailed information (name, path, size, date)
+DupFree uses a sidebar-based navigation layout with the following panels:
 
-### Duplicate Management
-- **Side-by-side display** of duplicate files for easy comparison
-- **Expandable/collapsible** groups for better organization
-- **Sort options**: Name, Size, Modified Date, Path
-- **Real-time progress tracking** during scanning
+### Sidebar Buttons
+| Button | Panel | Description |
+|--------|-------|-------------|
+| Browse | Scan Panel | Select directories and run duplicate scan |
+| Duplicate Files | Results Panel | View and manage duplicate file results |
+| Similar Images | Similar Images Panel | Find visually similar images |
+| Recycle Bin | Recycle Bin Panel | View and restore deleted files |
+| Settings | Settings Panel | Configure application preferences |
+| Help | Help Panel | In-app usage instructions |
 
-## 🚀 Getting Started
+### Footer
+The bottom of the main area displays four statistics cards:
+- **Files Checked** — Total files scanned
+- **Duplicates** — Number of duplicate groups found
+- **Space Wasted** — Total disk space consumed by duplicates
+- **Space Saved** — Disk space recovered by deleting duplicates
 
-### Requirements
-- Windows 10 or later
-- .NET 8.0 Runtime or SDK
-- Minimum 4GB RAM recommended
+### Storage Indicator
+The sidebar footer shows the selected drive's volume label, letter, and a usage progress bar.
 
-### Installation & Running
+---
 
-1. **Clone or extract the project**
-   ```bash
-   git clone <repository-url>
-   cd DupFree
-   ```
+## Browsing and Scanning
 
-2. **Build the project**
-   ```bash
-   dotnet build
-   ```
+### Selecting Directories
+1. Click **Browse** in the sidebar
+2. A native Windows folder browser dialog opens
+3. Select a directory — all subdirectories are scanned recursively
+4. The selected path appears in the sidebar
 
-3. **Run the application**
-   ```bash
-   dotnet run
-   ```
+### Running a Scan
+1. After selecting a folder, click the **Scan** button in the action bar
+2. The progress bar shows overall scan progress
+3. Scanning can be cancelled at any time with the **Cancel** button
+4. Status text shows the current scanning phase
 
-4. **Or build a release version**
-   ```bash
-   dotnet publish -c Release -r win-x64 --self-contained
-   ```
+### Filtering Options
+- **Search box**: Type to filter displayed results by filename
+- **Min Size**: Filter by minimum file size (All, 1MB, 10MB, 100MB)
+- **Limit**: Cap the number of files processed (All, 100, 1000, 100000)
 
-## 📖 Usage Guide
+---
 
-### Basic Workflow
+## Viewing Results
 
-1. **Select a Folder**
-   - Click the "📁 Browse" button
-   - Choose a directory to scan (folders will be scanned recursively)
+### List View (DataGrid)
+- Sortable columns: checkbox, Name, Path, Size, Modified Date
+- Click column headers to sort
+- Click row checkboxes to select files for deletion
 
-2. **Start Scanning**
-   - Click "🔍 Scan" to begin duplicate detection
-   - Watch the progress bar and status messages
-   - The scan may take time depending on folder size
+### Grid View (Thumbnails)
+- Thumbnail cards with file name and optional path
+- Click cards to select/deselect
+- Thumbnail size is configurable in Settings (100–300px)
+- Toggle between views using the view button in the action bar
 
-3. **View Results**
-   - Results are organized in groups (each group = one set of duplicates)
-   - Each group shows the number of duplicates and wasted space
-   - Files in each group are identical copies
+### Navigation
+- **Arrow keys**: Navigate between grid items
+- **Enter**: Open selected file in Windows Explorer
+- **Delete**: Delete selected files
+- **Double-click**: Open file in default application
 
-4. **Change View Mode**
-   - Click view mode buttons to switch between views
-   - **Icon View (🗷)**: Compact thumbnails
-   - **Large Icon View (⊞)**: Larger previews with more info
-   - **List View (☰)**: Detailed spreadsheet-like view
+---
 
-5. **Sort Results**
-   - Use the dropdown menu to sort by:
-     - **Name**: Alphabetical order
-     - **Size**: Largest to smallest
-     - **Modified Date**: Newest first
-     - **Path**: Directory path order
+## Deleting Files
 
-### Understanding the UI
+### Selecting Files
+- Click individual checkboxes in list view
+- Click thumbnail cards in grid view
+- Use **Select All** to select everything
+- The **Delete Selected (n)** button shows the current selection count
 
-**Header Colors:**
-- 🔵 Light Blue: Duplicate group header
-- Shows count of duplicates and total wasted space
+### Deletion Process
+1. Click **Delete Selected (n)**
+2. If confirm-delete is enabled (default), a confirmation dialog appears
+3. Files are moved to the Windows Recycle Bin
+4. Deleted files appear in the in-app Recycle Bin panel
+5. Results update automatically after deletion
 
-**File Display:**
-- Image files show visual thumbnails
-- Non-image files show a generic document icon
-- Size shown in human-readable format (B, KB, MB, GB)
-- Modification date helps identify which copy to keep
+---
 
-## 🏗️ Project Structure
+## Similar Image Detection
 
-```
-DupFree/
-├── Services/
-│   ├── FileHashService.cs           # SHA256 hashing utilities
-│   ├── DuplicateSearchService.cs    # Core duplicate detection engine
-│   └── ImagePreviewService.cs       # Thumbnail generation & file info
-├── Models/
-│   └── FileItemViewModel.cs         # Data models for UI binding
-├── Views/
-│   ├── MainWindow.xaml              # UI layout
-│   └── MainWindow.xaml.cs           # Event handlers & logic
-├── App.xaml & App.xaml.cs           # Application entry point
-├── DupFree.csproj                   # Project configuration
-├── app.manifest                     # Windows application manifest
-└── README.md                        # This file
-```
+### Opening the Panel
+Click **Similar Images** in the sidebar to open the dedicated panel.
 
-## 🔧 How It Works
+### Configuring the Scan
+- **Similarity threshold slider** (75–99%): Lower values find more matches, higher values are stricter
+- The panel uses the same directories selected via Browse
 
-### Duplicate Detection Algorithm
+### Running the Scan
+1. Click **Scan** to start
+2. Progress bar shows overall progress (hashing + SSIM verification)
+3. An optional timer shows elapsed scan time (enable in Settings)
+4. Groups appear progressively as they are discovered
 
-1. **Collection Phase**
-   - Recursively scans all directories
-   - Collects FileInfo for each file
+### Reviewing Results
+- **Left panel**: Scrollable list of similar image groups with 80×80 thumbnails
+- Click any thumbnail to select it — selected images have a red border
+- **Right panel**: Large preview (350×250) of the selected image with:
+  - File name and path
+  - File size and image dimensions
+  - Open Image button to view in default viewer
 
-2. **Size Grouping** (Quick Filter)
-   - Groups files by size
-   - Only processes groups with 2+ files
-   - Eliminates most files before expensive operations
+### Auto-Select Options
+Checkboxes at the top of the panel allow automatic selection of lower-quality versions:
+- **Keep Uncompressed**: Prefer uncompressed formats (BMP, TIFF)
+- **Keep Higher Resolution**: Prefer images with more pixels
+- **Keep Larger Filesize**: Prefer larger files
 
-3. **Hash Computation**
-   - Computes SHA256 hash for files in size groups
-   - Uses full file for accuracy
+### Deleting Similar Images
+- Select images to delete (manually or via auto-select)
+- Click **Delete Selected (n)** to remove them
+- Deleted files go to the Windows Recycle Bin
 
-4. **Duplicate Identification**
-   - Groups files by identical hashes
-   - Creates duplicate groups (minimum 2 files per group)
+---
 
-5. **UI Rendering**
-   - Displays results grouped with wasted space info
-   - Generates thumbnails for image files
-   - Applies user's chosen sorting
+## Recycle Bin
 
-### Performance Optimizations
+### Viewing Deleted Files
+Click **Recycle Bin** in the sidebar. A DataGrid shows:
+- File name
+- Original path
+- File size
+- Deletion timestamp
 
-- **Two-pass approach**: Size check before hashing
-- **Asynchronous operations**: Non-blocking UI during scanning
-- **Efficient memory usage**: Processes files in batches
-- **Smart thumbnail generation**: Max 256x256 with caching
+### Restoring Files
+- Right-click a file and select **Restore** to move it back to its original location
+- The in-app bin stores up to 30 recent deletions
 
-## 🎨 View Modes Explained
+### Clearing the Bin
+Use the **Clear** button to remove all entries from the in-app recycle bin list.
 
-### Icon View (🗷)
-- Compact 120x120 px display
-- Best for: Quick visual scanning
-- Shows: Thumbnail/icon, filename, size
+---
 
-### Large Icon View (⊞)
-- Spacious 180x180 px display
-- Best for: Photo/image collections
-- Shows: Large thumbnail, name, size, full path
+## Settings
 
-### List View (☰)
-- Traditional spreadsheet layout
-- Best for: Detailed analysis
-- Shows: Name, Path, Size, Modified Date
-- Columns sortable by view option
+Click **Settings** in the sidebar to access configuration options:
 
-## 📊 Tips for Best Results
+| Setting | Description | Default |
+|---------|-------------|---------|
+| Size Unit | Display file sizes in Auto/Bytes/KB/MB/GB/TB | Auto |
+| Grid Picture Size | Thumbnail size in grid view (100–300px slider) | 150px |
+| Show File Path | Display file paths under thumbnails in grid view | On |
+| Confirm Delete | Show confirmation dialog before deleting | On |
+| Show Scan Timer | Display elapsed time during similar image scans | Off |
+| Auto-Select: Keep Uncompressed | Prefer uncompressed image formats | Off |
+| Auto-Select: Keep Higher Resolution | Prefer higher resolution images | On |
+| Auto-Select: Keep Larger Filesize | Prefer larger files | Off |
 
-1. **Start with one folder** - Easier to understand results
-2. **Check modified dates** - Helps identify which file to keep
-3. **Preview images** - Visual thumbnails help confirm duplicates
-4. **Sort by size** - Large duplicates mean more space recovery
-5. **Sort by date** - Newer/older versions are more important
+All settings are saved automatically and persist between sessions.
 
-## 🛠️ Future Enhancement Ideas
+---
 
-- [ ] Delete/move duplicate files safely with confirmation
-- [ ] File comparison viewer (binary diff)
-- [ ] Export duplicate report to CSV/PDF
-- [ ] Custom file type filters
-- [ ] Scheduled scanning
-- [ ] Duplicate file safe removal wizard
-- [ ] Cloud storage support
-- [ ] Custom hash algorithm selection
-- [ ] Multi-threaded hash computation for faster scanning
-- [ ] Undo/recovery mechanism
+## Help Panel
 
-## ⚙️ System Requirements
-
-- **OS**: Windows 10 or later
-- **Framework**: .NET 8.0
-- **CPU**: Multi-core recommended
-- **RAM**: 4GB+ recommended
-- **Storage**: Free space for temporary operations
-
-## 📝 Troubleshooting
-
-### Application won't start
-- Ensure .NET 8.0 runtime is installed
-- Check Windows Firewall isn't blocking the app
-- Run with administrator privileges if access denied
-
-### Scanning is very slow
-- Large folders with millions of files take time
-- Check disk for bottlenecks
-- Close other applications to free resources
-
-### No duplicates found
-- Ensure folder contains more than one copy of files
-- Check file permissions
-- Try with a known duplicate file folder
-
-### Thumbnails not showing
-- Ensure image files are in supported formats
-- Check file permissions
-- Verify file isn't corrupted
-
-## 📄 License
-
-This project is provided as-is for educational and personal use.
-
-## 🤝 Contributing
-
-Feel free to fork and submit pull requests for improvements!
-
-## 📧 Support
-
-For issues, questions, or suggestions, please create an issue in the repository.
+Click **Help** in the sidebar for in-app usage instructions covering all major features.
