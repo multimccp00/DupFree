@@ -42,6 +42,9 @@ namespace DupFree.Services
         // Debug timer display for similar images scan
         public static bool ShowScanTimer { get; private set; } = false;
 
+        // Maximum number of items to keep in the recycle bin
+        public static int MaxRecycleBinSize { get; private set; } = 30;
+
         public static event Action OnSettingsChanged;
 
         public static void SetSizeUnit(SizeUnit u)
@@ -116,6 +119,12 @@ namespace DupFree.Services
             OnSettingsChanged?.Invoke();
         }
 
+        public static void SetMaxRecycleBinSize(int size)
+        {
+            MaxRecycleBinSize = Math.Max(0, size);
+            OnSettingsChanged?.Invoke();
+        }
+
         public static bool GetShowScanTimer()
         {
             return ShowScanTimer;
@@ -147,7 +156,8 @@ namespace DupFree.Services
                     AutoSelectKeepUncompressed,
                     AutoSelectKeepHigherResolution,
                     AutoSelectKeepLargerFilesize,
-                    ShowScanTimer
+                    ShowScanTimer,
+                    MaxRecycleBinSize
                 };
                 
                 var json = JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true });
@@ -206,6 +216,9 @@ namespace DupFree.Services
 
                 if (root.TryGetProperty("ShowScanTimer", out var showTimer))
                     ShowScanTimer = showTimer.GetBoolean();
+
+                if (root.TryGetProperty("MaxRecycleBinSize", out var maxBinSize))
+                    MaxRecycleBinSize = Math.Max(0, maxBinSize.GetInt32());
             }
             catch { /* Silently fail if settings can't be loaded */ }
         }

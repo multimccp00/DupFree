@@ -57,7 +57,7 @@ namespace DupFree.Views
         private readonly List<DeletedFileItem> _selectedRecycleBinItems = new List<DeletedFileItem>();
         private readonly List<FileItemViewModel> _selectedGridItems = new List<FileItemViewModel>(); // For scanned files grid selection
         private FileItemViewModel _lastSelectedGridItem = null; // For Shift+Click range selection
-        private const int MAX_RECYCLE_BIN_SIZE = 30;
+        // MAX_RECYCLE_BIN_SIZE now driven by SettingsService.MaxRecycleBinSize
 
         public MainWindow()
         {
@@ -378,7 +378,7 @@ namespace DupFree.Views
             _isScanning = true;  // Mark scan as in progress
             CancelButton.Visibility = Visibility.Visible;
             ProgressBar.Value = 0;
-            ScanProgressBar.Value = 0;
+            ScanProgressIndicator.Width = 0;
             ProgressPanel.Visibility = Visibility.Visible;
             ViewControlPanel.Visibility = Visibility.Collapsed;
             
@@ -408,7 +408,7 @@ namespace DupFree.Views
                 {
                     double percentage = (p.current * 100.0) / p.total;
                     ProgressBar.Value = percentage;
-                    ScanProgressBar.Value = percentage;
+                    UpdateScanProgressBar(percentage);
                     ProgressStatusText.Text = $"Scanning... {percentage:F0}%";
                 }
             });
@@ -470,9 +470,25 @@ namespace DupFree.Views
             ScanButton.IsEnabled = true;
             CancelButton.Visibility = Visibility.Collapsed;
             ProgressBar.Value = 100;
-            ScanProgressBar.Value = 100;
+            UpdateScanProgressBar(100);
             ProgressPanel.Visibility = Visibility.Collapsed;
             ViewControlPanel.Visibility = Visibility.Visible;
+        }
+
+        private void UpdateScanProgressBar(double percentage)
+        {
+            if (percentage < 0) percentage = 0;
+            if (percentage > 100) percentage = 100;
+            if (ScanProgressBarContainer != null && ScanProgressIndicator != null)
+            {
+                var totalWidth = ScanProgressBarContainer.ActualWidth;
+                if (totalWidth <= 0)
+                    totalWidth = ScanProgressBarContainer.Width;
+                if (double.IsNaN(totalWidth) || totalWidth <= 0)
+                    totalWidth = 150;
+                var availableWidth = Math.Max(0, totalWidth - 2);
+                ScanProgressIndicator.Width = availableWidth * (percentage / 100.0);
+            }
         }
 
         private void CancelButton_Click(object sender, RoutedEventArgs e)
@@ -983,6 +999,9 @@ namespace DupFree.Views
             var del = new MenuItem { Header = "Delete (Recycle Bin)", Tag = file };
             del.Click += OnDeleteMenuItem_Click;
             cm.Items.Add(del);
+            var delFolder = new MenuItem { Header = "Delete all duplicates in this folder", Tag = file };
+            delFolder.Click += OnDeleteAllDuplicatesInFolderMenuItem_Click;
+            cm.Items.Add(delFolder);
             panel.ContextMenu = cm;
 
             // Add double-click handler to open file
@@ -1150,6 +1169,9 @@ namespace DupFree.Views
             var del = new MenuItem { Header = "Delete (Recycle Bin)", Tag = file };
             del.Click += OnDeleteMenuItem_Click;
             cm.Items.Add(del);
+            var delFolder = new MenuItem { Header = "Delete all duplicates in this folder", Tag = file };
+            delFolder.Click += OnDeleteAllDuplicatesInFolderMenuItem_Click;
+            cm.Items.Add(delFolder);
             panel.ContextMenu = cm;
 
             // Wrap in border for selection highlighting
@@ -1306,6 +1328,9 @@ namespace DupFree.Views
             var del = new MenuItem { Header = "Delete (Recycle Bin)", Tag = file };
             del.Click += OnDeleteMenuItem_Click;
             cm.Items.Add(del);
+            var delFolder = new MenuItem { Header = "Delete all duplicates in this folder", Tag = file };
+            delFolder.Click += OnDeleteAllDuplicatesInFolderMenuItem_Click;
+            cm.Items.Add(delFolder);
             panel.ContextMenu = cm;
 
             var border = new Border
@@ -1554,6 +1579,201 @@ namespace DupFree.Views
             {
                 await DeleteFileAsync(file);
             }
+        }
+
+        private async void DataGridDeleteMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            if (ResultsDataGrid.SelectedItem is FileItemViewModel file)
+            {
+                await DeleteFileAsync(file);
+            }
+        }
+
+        private async void DeleteAllDuplicatesInFolderMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            // Called from DataGrid context menu
+            if (ResultsDataGrid.SelectedItem is FileItemViewModel file)
+            {
+                await DeleteAllDuplicatesInFolderAsync(file);
+            }
+        }
+
+        private async void OnDeleteAllDuplicatesInFolderMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            // Called from grid view context menus
+            if (sender is MenuItem mi && mi.Tag is FileItemViewModel file)
+            {
+                await DeleteAllDuplicatesInFolderAsync(file);
+            }
+        }
+
+        private async Task DeleteAllDuplicatesInFolderAsync(FileItemViewModel clickedFile)
+        {
+            string folder = Path.GetDirectoryName(clickedFile.FilePath);
+            if (string.IsNullOrEmpty(folder)) return;
+
+            // Collect all duplicate files in the same folder (excluding originals — keep one per group)
+            // Re-validate groups: only consider groups that still have 2+ files on disk
+            var filesToDelete = new List<FileItemViewModel>();
+            foreach (var group in _groupViewModels)
+            {
+                // Only process groups with actual duplicates (2+ files)
+                if (group.Files.Count < 2) continue;
+
+                // Find files in this group that are in the target folder
+                var filesInFolder = group.Files.Where(f =>
+                    string.Equals(Path.GetDirectoryName(f.FilePath), folder, StringComparison.OrdinalIgnoreCase)).ToList();
+
+                if (filesInFolder.Count == 0) continue;
+
+                // If the group has files both inside and outside the folder, delete the ones in the folder
+                // If all files in the group are in the folder, keep one (the first) and delete the rest
+                var filesOutsideFolder = group.Files.Where(f =>
+                    !string.Equals(Path.GetDirectoryName(f.FilePath), folder, StringComparison.OrdinalIgnoreCase)).ToList();
+
+                if (filesOutsideFolder.Count > 0)
+                {
+                    // There are copies outside this folder — safe to delete all in this folder
+                    filesToDelete.AddRange(filesInFolder);
+                }
+                else if (filesInFolder.Count > 1)
+                {
+                    // All copies are in this folder — keep the first, delete the rest
+                    filesToDelete.AddRange(filesInFolder.Skip(1));
+                }
+            }
+
+            // Final safety: only delete files that actually exist on disk
+            filesToDelete = filesToDelete.Where(f => File.Exists(f.FilePath)).ToList();
+
+            if (filesToDelete.Count == 0)
+            {
+                MessageBox.Show("No duplicate files found in this folder.", "Info", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            var confirm = MessageBox.Show(
+                $"Delete {filesToDelete.Count} duplicate file(s) from:\n{folder}?",
+                "Confirm Delete All Duplicates in Folder",
+                MessageBoxButton.YesNo, MessageBoxImage.Warning);
+
+            if (confirm != MessageBoxResult.Yes) return;
+
+            // Show progress bar during deletion
+            ProgressPanel.Visibility = Visibility.Visible;
+            ViewControlPanel.Visibility = Visibility.Collapsed;
+            ProgressStatusText.Text = $"Deleting 0/{filesToDelete.Count}...";
+            ScanProgressIndicator.Width = 0;
+            StatusText.Text = $"Deleting {filesToDelete.Count} duplicate file(s)...";
+
+            // Batch delete: do all file I/O on background thread, report progress to UI
+            var pathsToDelete = filesToDelete.Select(f => f.FilePath).ToList();
+            int deleted = 0;
+            int failed = 0;
+            int total = pathsToDelete.Count;
+
+            var deleteProgress = new Progress<int>((current) =>
+            {
+                double pct = total > 0 ? (current * 100.0) / total : 0;
+                UpdateScanProgressBar(pct);
+                ProgressStatusText.Text = $"Deleting {current}/{total}...";
+            });
+
+            // Only load thumbnails for the N most recent files that will fit in the recycle bin
+            int maxBin = SettingsService.MaxRecycleBinSize;
+            int thumbCount = maxBin > 0 ? Math.Min(maxBin, filesToDelete.Count) : filesToDelete.Count;
+            // Take the LAST thumbCount items (they'll be inserted first = most recent)
+            var filesToCapture = filesToDelete.Skip(filesToDelete.Count - thumbCount).ToList();
+            var thumbData = new List<(FileItemViewModel file, BitmapImage thumb)>();
+            int gridSize = SettingsService.GridPictureSize;
+            
+            await Task.Run(() =>
+            {
+                // Load thumbnails only for files that will fit in the recycle bin
+                foreach (var file in filesToCapture)
+                {
+                    BitmapImage thumb = file.Thumbnail;
+                    if (thumb == null && File.Exists(file.FilePath) && Services.ImagePreviewService.IsPreviewableImage(file.FilePath))
+                    {
+                        try
+                        {
+                            thumb = Services.ImagePreviewService.GetThumbnail(file.FilePath, gridSize, gridSize);
+                        }
+                        catch { }
+                    }
+                    thumbData.Add((file, thumb));
+                }
+
+                // Delete all files
+                for (int i = 0; i < pathsToDelete.Count; i++)
+                {
+                    try
+                    {
+                        FileSystem.DeleteFile(pathsToDelete[i], UIOption.OnlyErrorDialogs, RecycleOption.SendToRecycleBin);
+                        Interlocked.Increment(ref deleted);
+                    }
+                    catch
+                    {
+                        try { File.Delete(pathsToDelete[i]); Interlocked.Increment(ref deleted); }
+                        catch { Interlocked.Increment(ref failed); }
+                    }
+                    ((IProgress<int>)deleteProgress).Report(i + 1);
+                }
+            });
+
+            // Add to recycle bin on UI thread after all I/O is done
+            RecycleBinDataGrid.ItemsSource = null;
+            foreach (var (file, thumb) in thumbData)
+            {
+                var deletedItem = new DeletedFileItem
+                {
+                    FileName = file.FileName,
+                    FilePath = file.FilePath,
+                    FileSize = file.FileSize,
+                    FileSizeFormatted = file.SizeFormatted,
+                    DeletedTime = DateTime.Now,
+                    OriginalViewModel = file,
+                    Thumbnail = thumb
+                };
+                _recycleBin.Insert(0, deletedItem);
+            }
+            // Trim recycle bin
+            int maxSize = SettingsService.MaxRecycleBinSize;
+            if (maxSize > 0)
+            {
+                while (_recycleBin.Count > maxSize)
+                    _recycleBin.RemoveAt(_recycleBin.Count - 1);
+            }
+
+            // Remove deleted files from view models in one pass
+            var deletedPaths = new HashSet<string>(pathsToDelete, StringComparer.OrdinalIgnoreCase);
+            foreach (var group in _groupViewModels)
+            {
+                group.Files.RemoveAll(f => deletedPaths.Contains(f.FilePath));
+            }
+            // Accumulate deleted size
+            _totalDeletedSize += filesToDelete.Where(f => deletedPaths.Contains(f.FilePath)).Sum(f => f.FileSize);
+
+            // Clean up cached lists
+            _selectedGridItems.RemoveAll(f => deletedPaths.Contains(f.FilePath));
+            _currentGridFiles.RemoveAll(f => deletedPaths.Contains(f.FilePath));
+            _groupViewModels.RemoveAll(g => g.Files.Count <= 1);
+
+            // Full UI rebuild to ensure consistency
+            ApplySorting();
+            ResultsDataGrid.ItemsSource = null;
+            ResultsListView.ItemsSource = null;
+            DisplayResults();
+            UpdateFooterStats();
+            UpdateDeleteCount();
+
+            // Hide progress bar
+            ProgressPanel.Visibility = Visibility.Collapsed;
+            ViewControlPanel.Visibility = Visibility.Visible;
+            UpdateScanProgressBar(100);
+
+            StatusText.Text = $"Deleted {deleted} duplicate file(s) from {Path.GetFileName(folder)}" +
+                (failed > 0 ? $" ({failed} failed)" : "");
         }
 
         private async Task DeleteFileAsync(FileItemViewModel file, bool skipConfirm = false)
@@ -1830,6 +2050,8 @@ namespace DupFree.Views
             if (ShowScanTimerCheckBox != null)
                 ShowScanTimerCheckBox.IsChecked = SettingsService.GetShowScanTimer();
 
+            if (RecycleBinSizeTextBox != null)
+                RecycleBinSizeTextBox.Text = SettingsService.MaxRecycleBinSize.ToString();
         }
 
 
@@ -1841,6 +2063,42 @@ namespace DupFree.Views
 
             SettingsService.SetConfirmDelete(ConfirmDeleteCheckBox.IsChecked == true);
             SettingsService.SaveToFile();
+        }
+
+        private void SaveRecycleBinSizeButton_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                int maxSize = 30;
+
+                if (!string.IsNullOrWhiteSpace(RecycleBinSizeTextBox.Text))
+                {
+                    if (!int.TryParse(RecycleBinSizeTextBox.Text, out maxSize) || maxSize < 0)
+                    {
+                        MessageBox.Show("Please enter a valid number (0 or greater). 0 means no limit.", "Invalid Input", MessageBoxButton.OK, MessageBoxImage.Warning);
+                        return;
+                    }
+                }
+
+                SettingsService.SetMaxRecycleBinSize(maxSize);
+                SettingsService.SaveToFile();
+
+                // Trim existing recycle bin if needed
+                if (maxSize > 0)
+                {
+                    while (_recycleBin.Count > maxSize)
+                    {
+                        _recycleBin.RemoveAt(_recycleBin.Count - 1);
+                    }
+                }
+
+                MessageBox.Show($"Recycle bin size applied successfully: {(maxSize == 0 ? "No limit" : maxSize.ToString())}",
+                    "Settings Saved", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Error saving recycle bin size: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
         }
 
         private void SidebarHelpButton_Click(object sender, RoutedEventArgs e)
@@ -2433,6 +2691,18 @@ namespace DupFree.Views
         // Recycle Bin Methods
         private void AddToRecycleBin(FileItemViewModel file)
         {
+            // Ensure thumbnail is loaded before file gets deleted
+            BitmapImage thumb = file.Thumbnail;
+            if (thumb == null && File.Exists(file.FilePath) && Services.ImagePreviewService.IsPreviewableImage(file.FilePath))
+            {
+                try
+                {
+                    int gridSize = SettingsService.GridPictureSize;
+                    thumb = Services.ImagePreviewService.GetThumbnail(file.FilePath, gridSize, gridSize);
+                }
+                catch { }
+            }
+
             var deletedItem = new DeletedFileItem
             {
                 FileName = file.FileName,
@@ -2441,16 +2711,20 @@ namespace DupFree.Views
                 FileSizeFormatted = file.SizeFormatted,
                 DeletedTime = DateTime.Now,
                 OriginalViewModel = file,
-                Thumbnail = file.Thumbnail
+                Thumbnail = thumb
             };
 
             // Add to beginning of list (most recent first)
             _recycleBin.Insert(0, deletedItem);
 
             // Maintain max size - remove oldest items
-            while (_recycleBin.Count > MAX_RECYCLE_BIN_SIZE)
+            int maxSize = SettingsService.MaxRecycleBinSize;
+            if (maxSize > 0)
             {
-                _recycleBin.RemoveAt(_recycleBin.Count - 1);
+                while (_recycleBin.Count > maxSize)
+                {
+                    _recycleBin.RemoveAt(_recycleBin.Count - 1);
+                }
             }
         }
 

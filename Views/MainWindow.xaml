@@ -4,6 +4,7 @@
     xmlns:local="clr-namespace:DupFree.Views"
     xmlns:sys="clr-namespace:System;assembly=mscorlib"
     Title="DupFree - Duplicate File Finder" Height="900" Width="1400"
+    Icon="/Assets/dupfree_logo.png"
     Background="{DynamicResource AppBackground}"
     Foreground="{DynamicResource WindowForeground}"
     PreviewKeyDown="MainWindow_PreviewKeyDown">
@@ -32,10 +33,8 @@
                 <!-- Navigation buttons - this will fill remaining space -->
                 <StackPanel Margin="24,24,24,0">
                     <StackPanel Orientation="Horizontal" Margin="0,0,0,20">
-                        <Border Width="40" Height="40" Background="{DynamicResource ScanButtonBrush}" CornerRadius="8" Margin="0,0,12,0">
-                            <TextBlock Text="D" VerticalAlignment="Center" HorizontalAlignment="Center" Foreground="White" FontWeight="Bold" FontSize="16" />
-                        </Border>
-                        <StackPanel>
+                        <Image Source="/Assets/dupfree_logo.png" Width="40" Height="40" Margin="0,0,12,0" RenderOptions.BitmapScalingMode="HighQuality" />
+                        <StackPanel VerticalAlignment="Center">
                             <TextBlock Text="DupFree" FontSize="14" FontWeight="Bold" Foreground="{DynamicResource WindowForeground}" />
                             <TextBlock Text="v1.1" FontSize="11" Foreground="{DynamicResource MutedForeground}" />
                         </StackPanel>
@@ -185,7 +184,10 @@
                     <!-- Progress Bar (visible during scan) -->
                     <StackPanel Grid.Column="3" x:Name="ProgressPanel" Orientation="Vertical" HorizontalAlignment="Stretch" VerticalAlignment="Center" Margin="16,0,16,0" Visibility="Collapsed">
                         <TextBlock x:Name="ProgressStatusText" Text="Scanning..." Foreground="{DynamicResource ControlForeground}" FontSize="11" Margin="0,0,0,4" />
-                        <ProgressBar x:Name="ScanProgressBar" Height="8" Background="#374151" Foreground="{DynamicResource ScanButtonBrush}" BorderThickness="0" />
+                        <Grid x:Name="ScanProgressBarContainer" Height="10" HorizontalAlignment="Stretch">
+                            <Border Background="{DynamicResource SidebarBackground}" CornerRadius="5" BorderBrush="#4B5563" BorderThickness="1" />
+                            <Border x:Name="ScanProgressIndicator" Background="{DynamicResource ScanButtonBrush}" CornerRadius="4" Width="0" HorizontalAlignment="Left" Margin="1" />
+                        </Grid>
                     </StackPanel>
                     
                     <StackPanel Grid.Column="3" x:Name="ViewControlPanel" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
@@ -250,6 +252,12 @@
                                       ScrollViewer.CanContentScroll="True"
                                       VirtualizingPanel.IsVirtualizing="True"
                                       VirtualizingPanel.VirtualizationMode="Recycling">
+                                <DataGrid.ContextMenu>
+                                    <ContextMenu>
+                                        <MenuItem Header="Delete (Recycle Bin)" Click="DataGridDeleteMenuItem_Click" />
+                                        <MenuItem Header="Delete all duplicates in this folder" Click="DeleteAllDuplicatesInFolderMenuItem_Click" />
+                                    </ContextMenu>
+                                </DataGrid.ContextMenu>
                                 <DataGrid.Columns>
                                     <DataGridTemplateColumn Width="40">
                                         <DataGridTemplateColumn.Header>
@@ -441,6 +449,23 @@
                                         
                                         <Button Name="SaveGridFilePathButton" Click="SaveGridFilePathButton_Click" Style="{StaticResource PrimaryButton}" Padding="16,10" HorizontalAlignment="Left">
                                             Apply Setting
+                                        </Button>
+                                    </StackPanel>
+                                </Border>
+
+                                <!-- Recycle Bin Size Section -->
+                                <Border Background="{DynamicResource CardBackground}" CornerRadius="8" Padding="20" Margin="0,0,0,16">
+                                    <StackPanel>
+                                        <TextBlock Text="Recycle Bin Size" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,12" />
+                                        <TextBlock Text="Maximum number of deleted files to keep in the recycle bin (0 = no limit)" Foreground="{DynamicResource MutedForeground}" Margin="0,0,0,16" />
+                                        
+                                        <StackPanel>
+                                            <TextBlock Text="Maximum Files in Recycle Bin" Foreground="{DynamicResource MutedForeground}" FontSize="12" Margin="0,0,0,8" />
+                                            <TextBox Name="RecycleBinSizeTextBox" Text="30" Height="40" MaxWidth="300" HorizontalAlignment="Left" />
+                                        </StackPanel>
+                                        
+                                        <Button Name="SaveRecycleBinSizeButton" Click="SaveRecycleBinSizeButton_Click" Style="{StaticResource PrimaryButton}" Margin="0,16,0,0" Padding="16,10" HorizontalAlignment="Left">
+                                            Apply Recycle Bin Size
                                         </Button>
                                     </StackPanel>
                                 </Border>
