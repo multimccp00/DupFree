@@ -19,6 +19,7 @@ using Microsoft.VisualBasic.FileIO;
 using Ookii.Dialogs.Wpf;
 using System.Runtime.InteropServices;
 using System.Windows.Interop;
+using System.Diagnostics;
 
 namespace DupFree.Views
 {
@@ -50,6 +51,12 @@ namespace DupFree.Views
         private const int FILES_PER_BATCH = 500;  // Render 500 files at a time
         private readonly SemaphoreSlim _thumbnailSemaphore = new SemaphoreSlim(4);
         private readonly HashSet<string> _thumbnailLoading = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        // Limit concurrent video hover previews to avoid heavy CPU/memory usage
+        private int _activeVideoPreviews = 0;
+        private const int MaxConcurrentVideoPreviews = 2;
+        // Limit concurrent manual GIF animations (hover) to avoid CPU spikes on large grids
+        private int _activeGifAnimations = 0;
+        private const int MaxConcurrentGifAnimations = 6;
         private bool _isScanning = false;  // Track if a scan is currently in progress
         
         // Recycle Bin functionality
@@ -76,8 +83,8 @@ namespace DupFree.Views
 
             // Initialize grid dimensions from settings
             int gridSize = SettingsService.GridPictureSize;
-            _virtualItemWidth = gridSize + 56;  // size + panel padding + margins
-            _virtualItemHeight = gridSize + (SettingsService.ShowGridFilePath ? 104 : 84); // adjust based on path display setting
+            _virtualItemWidth = gridSize + 36;  // size + panel padding + margins (reduced spacing)
+            _virtualItemHeight = gridSize + (SettingsService.ShowGridFilePath ? 92 : 72); // adjust based on path display setting (reduced spacing)
 
             _searchService = new DuplicateSearchService();
             // Ensure service events update UI on dispatcher thread
@@ -99,6 +106,7 @@ namespace DupFree.Views
             };
         }
 
+        [System.Runtime.Versioning.SupportedOSPlatform("windows")]
         private async void MainWindow_PreviewKeyDown(object sender, KeyEventArgs e)
         {
             if (e.Key != Key.Delete)
@@ -320,11 +328,13 @@ namespace DupFree.Views
             ScanButton.Background = appResources["ScanButtonBrush"] as System.Windows.Media.Brush;
         }
 
+        [System.Runtime.Versioning.SupportedOSPlatform("windows")]
         private void BrowseButton_Click(object sender, RoutedEventArgs e)
         {
             TrySelectDirectories(autoScan: false);
         }
 
+        [System.Runtime.Versioning.SupportedOSPlatform("windows")]
         public bool TrySelectDirectories(bool autoScan)
         {
             var dialog = new VistaFolderBrowserDialog();
@@ -360,6 +370,7 @@ namespace DupFree.Views
                 return false;
             }
         }
+        [System.Runtime.Versioning.SupportedOSPlatform("windows")]
         private async void ScanButton_Click(object sender, RoutedEventArgs e)
         {
             // If no directory selected, trigger browse first
@@ -599,18 +610,22 @@ namespace DupFree.Views
             return $"{len:0.##} {sizes[order]}";
         }
 
-        private async void DisplayResults()
+        private void DisplayResults()
         {
+            System.Diagnostics.Debug.WriteLine("DisplayResults: Entered method");
+
             // Count total files first
             int totalFiles = 0;
             foreach (var group in _groupViewModels)
             {
                 totalFiles += group.Files.Count;
             }
+            System.Diagnostics.Debug.WriteLine($"DisplayResults: Total files: {totalFiles}");
 
             // Show/hide placeholder based on whether we have results
             if (totalFiles == 0)
             {
+                System.Diagnostics.Debug.WriteLine("DisplayResults: No results found, showing placeholder");
                 NoResultsPlaceholder.Visibility = Visibility.Visible;
                 ResultsDataGrid.Visibility = Visibility.Collapsed;
                 ResultsListView.Visibility = Visibility.Collapsed;
@@ -625,8 +640,11 @@ namespace DupFree.Views
                 NoResultsPlaceholder.Visibility = Visibility.Collapsed;
             }
 
+            System.Diagnostics.Debug.WriteLine($"DisplayResults: Current view mode: {_currentViewMode}");
+
             if (_currentViewMode == "list")
             {
+                System.Diagnostics.Debug.WriteLine("DisplayResults: Rendering list view");
                 _isVirtualGridActive = false;
                 ResultsScrollViewer.ScrollChanged -= ResultsScrollViewer_ScrollChanged;
                 ResultsScrollViewer.SizeChanged -= ResultsScrollViewer_SizeChanged;
@@ -634,7 +652,7 @@ namespace DupFree.Views
                 ResultsScrollViewer.Visibility = Visibility.Collapsed;
                 ResultsListView.Visibility = Visibility.Collapsed;
                 ResultsDataGrid.Visibility = Visibility.Visible;
-                
+
                 var flat = new List<FileItemViewModel>();
                 var seenPathsListView = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 foreach (var group in _groupViewModels)
@@ -646,30 +664,35 @@ namespace DupFree.Views
                         // Skip duplicates based on file path
                         if (!seenPathsListView.Add(f.FilePath))
                             continue;
-                            
+
                         f.DupCount = dupCount;
                         f.DupSpace = dupSpace;
                         flat.Add(f);
                     }
                 }
-                
+
+                System.Diagnostics.Debug.WriteLine($"DisplayResults: Flat list contains {flat.Count} items");
+
                 // Apply duplicate limit from settings
                 if (SettingsService.MaxDuplicatesToShow > 0 && flat.Count > SettingsService.MaxDuplicatesToShow)
                 {
                     flat = flat.Take(SettingsService.MaxDuplicatesToShow).ToList();
                 }
-                
+
                 var filtered = FilterFiles(flat);
+                System.Diagnostics.Debug.WriteLine($"DisplayResults: Filtered list contains {filtered.Count} items");
+
                 // Use DataGrid for proper column binding
                 ResultsDataGrid.ItemsSource = filtered;
                 UpdateSelectedCount();
-                
+
                 StatusText.Text = $"Displaying {flat.Count} files in list view";
                 UpdateFooterStats();
                 UpdateStorageIndicator();
             }
-            else if (_currentViewMode == "icons" || _currentViewMode == "large_icons" || _currentViewMode == "xlarge_icons")
+            else if (_currentViewMode == "grid")
             {
+                System.Diagnostics.Debug.WriteLine("DisplayResults: Rendering grid view");
                 ResultsListView.Visibility = Visibility.Collapsed;
                 ResultsDataGrid.Visibility = Visibility.Collapsed;
                 ResultsScrollViewer.Visibility = Visibility.Visible;
@@ -682,18 +705,18 @@ namespace DupFree.Views
                 {
                     allGridFiles.AddRange(group.Files);
                 }
-                
+
                 System.Diagnostics.Debug.WriteLine($"DisplayResults: Total groups: {_groupViewModels.Count}, Total flattened files: {allGridFiles.Count}");
-                
+
                 // Apply duplicate limit from settings
                 if (SettingsService.MaxDuplicatesToShow > 0 && allGridFiles.Count > SettingsService.MaxDuplicatesToShow)
                 {
                     allGridFiles = allGridFiles.Take(SettingsService.MaxDuplicatesToShow).ToList();
                 }
-                
+
                 var filteredFiles = FilterFiles(allGridFiles);
                 System.Diagnostics.Debug.WriteLine($"DisplayResults: After filtering: {filteredFiles.Count} files");
-                
+
                 // Deduplicate based on file path (in case of duplicate entries)
                 var uniqueFiles = new List<FileItemViewModel>();
                 var seenPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -704,7 +727,7 @@ namespace DupFree.Views
                         uniqueFiles.Add(file);
                     }
                 }
-                
+
                 _currentGridFiles.AddRange(uniqueFiles);
                 System.Diagnostics.Debug.WriteLine($"DisplayResults: After dedup: {uniqueFiles.Count} files, now _currentGridFiles contains {_currentGridFiles.Count} files");
                 UpdateSelectedCount();
@@ -712,27 +735,115 @@ namespace DupFree.Views
                 // For smaller sets, render with WrapPanel to avoid virtualization gaps
                 if (_currentGridFiles.Count <= 1000)
                 {
+                    System.Diagnostics.Debug.WriteLine("DisplayResults: Using WrapPanel for rendering");
                     _isVirtualGridActive = false;
                     ResultsScrollViewer.ScrollChanged -= ResultsScrollViewer_ScrollChanged;
                     ResultsScrollViewer.SizeChanged -= ResultsScrollViewer_SizeChanged;
 
                     ResultsPanel.Children.Clear();
-                    
+
                     var wrap = new WrapPanel
                     {
                         Orientation = Orientation.Horizontal,
-                        HorizontalAlignment = HorizontalAlignment.Left
+                        HorizontalAlignment = HorizontalAlignment.Stretch
                     };
 
-                    // Ensure WrapPanel has a constrained width for proper wrapping
-                    double wrapWidth = ResultsScrollViewer.ViewportWidth;
-                    if (double.IsNaN(wrapWidth) || wrapWidth <= 0)
-                        wrapWidth = ResultsScrollViewer.ActualWidth;
-                    if (!double.IsNaN(wrapWidth) && wrapWidth > 0)
-                        wrap.Width = wrapWidth;
-
+                    // Try to constrain wrap width immediately (may be 0 on first layout).
+                    AdjustWrapPanelWidth(wrap);
                     ResultsPanel.Children.Add(wrap);
-                    
+
+                    // Re-subscribe SizeChanged so the WrapPanel is updated when the ScrollViewer
+                    // finally reports a valid ViewportWidth (prevents first-time overlap).
+                    ResultsScrollViewer.SizeChanged -= ResultsScrollViewer_SizeChanged;
+                    ResultsScrollViewer.SizeChanged += ResultsScrollViewer_SizeChanged;
+
+                    // Local helper to populate the WrapPanel (kept before LayoutUpdated usage)
+                    Action addChildren = () =>
+                    {
+                        // guard against double-add
+                        if (wrap.Children.Count > 0 && wrap.Children.OfType<FrameworkElement>().Any(c => c.Tag is FileItemViewModel))
+                            return;
+
+                        System.Diagnostics.Debug.WriteLine($"DisplayResults: About to add {_currentGridFiles.Count} items to WrapPanel");
+                        int addedCount = 0;
+                        foreach (var file in _currentGridFiles)
+                        {
+                            var element = GetViewModeCreateFunc()(file);
+                            if (element != null)
+                            {
+                                wrap.Children.Add(element);
+                                addedCount++;
+                            }
+                            else
+                            {
+                                System.Diagnostics.Debug.WriteLine($"DisplayResults: Failed to create element for file: {file.FilePath}");
+                            }
+                        }
+                        System.Diagnostics.Debug.WriteLine($"DisplayResults: Successfully added {addedCount} items to WrapPanel");
+
+                        // Force layout recalculation to fix overlapping/gaps after scan or view switch
+                        wrap.InvalidateMeasure();
+                        wrap.InvalidateArrange();
+                        ResultsPanel.InvalidateMeasure();
+                        ResultsPanel.InvalidateArrange();
+                        ResultsScrollViewer.InvalidateMeasure();
+                        ResultsScrollViewer.InvalidateArrange();
+                        wrap.UpdateLayout();
+                        ResultsPanel.UpdateLayout();
+                        ResultsScrollViewer.UpdateLayout();
+                    };
+
+                    // One-time LayoutUpdated handler — run after WPF finishes the next layout pass
+                    // and only populate the WrapPanel when we have a stable measured width. This avoids
+                    // race conditions where children are added before the WrapPanel/ScrollViewer measure
+                    // is valid (causes stacking/empty-space glitches).
+                    bool childrenAdded = false;
+                    EventHandler layoutUpdatedHandler = null;
+                    layoutUpdatedHandler = (s, ev) =>
+                    {
+                        try
+                        {
+                            double wrapWidth = ResultsScrollViewer.ViewportWidth;
+                            if (double.IsNaN(wrapWidth) || wrapWidth <= 0)
+                                wrapWidth = ResultsScrollViewer.ActualWidth;
+
+                            if (!double.IsNaN(wrapWidth) && wrapWidth > 1)
+                            {
+                                AdjustWrapPanelWidth(wrap);
+
+                                // populate children once we have a usable width
+                                if (!childrenAdded)
+                                {
+                                    addChildren();
+                                    childrenAdded = true;
+                                }
+
+                                ResultsScrollViewer.LayoutUpdated -= layoutUpdatedHandler;
+                            }
+                        }
+                        catch
+                        {
+                            ResultsScrollViewer.LayoutUpdated -= layoutUpdatedHandler;
+                        }
+                    };
+                    ResultsScrollViewer.LayoutUpdated += layoutUpdatedHandler;
+
+                    // Fallback timer: if LayoutUpdated doesn't run with a valid width within 250ms,
+                    // add children anyway (prevents indefinite delay on some systems).
+                    var fallbackTimer = new System.Windows.Threading.DispatcherTimer(System.TimeSpan.FromMilliseconds(250), System.Windows.Threading.DispatcherPriority.Normal, (ts, te) =>
+                    {
+                        var timer = ts as System.Windows.Threading.DispatcherTimer;
+                        if (!childrenAdded)
+                        {
+                            AdjustWrapPanelWidth(wrap);
+                            addChildren();
+                            childrenAdded = true;
+                        }
+                        timer.Stop();
+                        ResultsScrollViewer.LayoutUpdated -= layoutUpdatedHandler;
+                    }, Dispatcher);
+                    fallbackTimer.Start();
+
                     // Add click handler to WrapPanel for deselecting when clicking empty space
                     wrap.MouseLeftButtonDown += (s, e) =>
                     {
@@ -746,23 +857,14 @@ namespace DupFree.Views
                             e.Handled = true;
                         }
                     };
-                    
-                    System.Diagnostics.Debug.WriteLine($"DisplayResults: About to add {_currentGridFiles.Count} items to WrapPanel");
-                    int addedCount = 0;
-                    foreach (var file in _currentGridFiles)
-                    {
-                        wrap.Children.Add(GetViewModeCreateFunc()(file));
-                        addedCount++;
-                    }
-                    System.Diagnostics.Debug.WriteLine($"DisplayResults: Successfully added {addedCount} items to WrapPanel");
 
                     StatusText.Text = $"Displaying {_currentGridFiles.Count} files (grid)";
                 }
                 else
                 {
-
+                    System.Diagnostics.Debug.WriteLine("DisplayResults: Using virtualized grid for rendering");
                     ResultsPanel.Children.Clear();
-                    
+
                     // Create canvas for virtualized rendering
                     var gridCanvas = new Canvas();
                     ResultsPanel.Children.Add(gridCanvas);
@@ -779,21 +881,19 @@ namespace DupFree.Views
             _realizedGridItems.Clear();
 
             // Determine item size based on view mode (includes margin)
-            if (_currentViewMode == "xlarge_icons")
+            if (_currentViewMode == "grid")
             {
-                _virtualItemWidth = 384;
-                _virtualItemHeight = 444;
-            }
-            else if (_currentViewMode == "large_icons")
-            {
-                _virtualItemWidth = 240;
-                _virtualItemHeight = 300;
+                // Compute virtual item size from configured grid picture size so rows/columns match WrapPanel items
+                int pictureSize = SettingsService.GridPictureSize;
+                // panel width = pictureSize + 40, add a small gap (12) between items when virtualized
+                _virtualItemWidth = pictureSize + 40 + 12;
+                _virtualItemHeight = pictureSize + (SettingsService.ShowGridFilePath ? 92 : 72) + 12;
             }
             else
             {
                 int gridSize = SettingsService.GridPictureSize;
-                _virtualItemWidth = gridSize + 56;  // size + panel padding + margins
-                _virtualItemHeight = gridSize + (SettingsService.ShowGridFilePath ? 104 : 84); // adjust based on path display setting
+                _virtualItemWidth = gridSize + 36;  // size + panel padding + margins (reduced spacing)
+                _virtualItemHeight = gridSize + (SettingsService.ShowGridFilePath ? 92 : 72); // adjust based on path display setting (reduced spacing)
             }
 
             ResultsScrollViewer.ScrollChanged -= ResultsScrollViewer_ScrollChanged;
@@ -822,12 +922,43 @@ namespace DupFree.Views
             {
                 if (ResultsPanel.Children[0] is WrapPanel wrap)
                 {
-                    double wrapWidth = ResultsScrollViewer.ViewportWidth;
-                    if (double.IsNaN(wrapWidth) || wrapWidth <= 0)
-                        wrapWidth = ResultsScrollViewer.ActualWidth;
-                    if (!double.IsNaN(wrapWidth) && wrapWidth > 0)
-                        wrap.Width = wrapWidth;
+                    AdjustWrapPanelWidth(wrap);
                 }
+            }
+        }
+
+        // Keep the recycle-bin wrap in sync with its ScrollViewer viewport
+        private void RecycleBinScrollViewer_SizeChanged(object sender, SizeChangedEventArgs e)
+        {
+            if (RecycleBinResultsPanel.Children.Count == 0)
+                return;
+
+            if (RecycleBinResultsPanel.Children[0] is WrapPanel wrap)
+            {
+                double wrapWidth = RecycleBinScrollViewer.ViewportWidth;
+                if (double.IsNaN(wrapWidth) || wrapWidth <= 0)
+                    wrapWidth = RecycleBinScrollViewer.ActualWidth;
+                if (!double.IsNaN(wrapWidth) && wrapWidth > 0)
+                {
+                    wrap.Width = wrapWidth;
+                    wrap.MinWidth = wrapWidth;
+                    wrap.MaxWidth = wrapWidth;
+                    wrap.InvalidateMeasure();
+                    wrap.UpdateLayout();
+                }
+            }
+        }
+
+        private void AdjustWrapPanelWidth(WrapPanel wrap)
+        {
+            double wrapWidth = ResultsScrollViewer.ViewportWidth;
+            if (double.IsNaN(wrapWidth) || wrapWidth <= 0)
+                wrapWidth = ResultsScrollViewer.ActualWidth;
+            if (!double.IsNaN(wrapWidth) && wrapWidth > 0)
+            {
+                wrap.Width = wrapWidth;
+                wrap.MinWidth = wrapWidth;
+                wrap.MaxWidth = wrapWidth;
             }
         }
 
@@ -892,6 +1023,10 @@ namespace DupFree.Views
                     if (elem is FrameworkElement fe)
                     {
                         fe.Margin = new Thickness(0);
+                        // Ensure realized element uses the same fixed height as virtual item bucket so
+                        // its ActualHeight won't change later and break canvas positioning.
+                        fe.Width = _virtualItemWidth - 12; // account for small spacing used in measurements
+                        fe.Height = _virtualItemHeight - 12; // keep consistent with virtual row height
                     }
 
                     int row = i / _virtualColumns;
@@ -903,6 +1038,87 @@ namespace DupFree.Views
                     _realizedGridItems[i] = elem;
                 }
             }
+
+            // Reposition all currently-realized items (handles _virtualColumns changes / window resize)
+            foreach (var kv in _realizedGridItems.ToList())
+            {
+                int idx = kv.Key;
+                var child = kv.Value;
+                int newRow = idx / _virtualColumns;
+                int newCol = idx % _virtualColumns;
+                Canvas.SetLeft(child, newCol * _virtualItemWidth);
+                Canvas.SetTop(child, newRow * _virtualItemHeight);
+            }
+
+            System.Diagnostics.Debug.WriteLine($"UpdateVirtualGrid: repositioned {_realizedGridItems.Count} realized items (cols={_virtualColumns}, itemW={_virtualItemWidth}, itemH={_virtualItemHeight})");
+                    Console.WriteLine($"UpdateVirtualGrid: repositioned {_realizedGridItems.Count} realized items (cols={_virtualColumns}, itemW={_virtualItemWidth}, itemH={_virtualItemHeight})");
+
+            // Detect any accidental overlapping positions among realized children (debugging aid)
+            try
+            {
+                var posMap = new Dictionary<(int left, int top), List<int>>();
+                foreach (var kv in _realizedGridItems)
+                {
+                    int idx = kv.Key;
+                    var child = kv.Value;
+                    int left = (int)Math.Round(Canvas.GetLeft(child));
+                    int top = (int)Math.Round(Canvas.GetTop(child));
+                    var key = (left, top);
+                    if (!posMap.TryGetValue(key, out var list))
+                    {
+                        list = new List<int>();
+                        posMap[key] = list;
+                    }
+                    list.Add(idx);
+                }
+
+                bool hadCollision = false;
+                foreach (var kv in posMap.Where(k => k.Value.Count > 1))
+                {
+                    hadCollision = true;
+                    var indices = kv.Value;
+                    var files = indices.Select(i => (i < _currentGridFiles.Count ? _currentGridFiles[i].FileName : "<out-of-range>")).ToList();
+                    System.Diagnostics.Debug.WriteLine($"UpdateVirtualGrid: COLLISION at ({kv.Key.left},{kv.Key.top}) -> idx=[{string.Join(',', indices)}], files=[{string.Join(',', files)}]");
+                    Console.WriteLine($"UpdateVirtualGrid: COLLISION at ({kv.Key.left},{kv.Key.top}) -> idx=[{string.Join(',', indices)}], files=[{string.Join(',', files)}]");
+                }
+
+                // Automatic recovery if collision detected — rebuild the visible canvas region
+                if (hadCollision)
+                {
+                    System.Diagnostics.Debug.WriteLine("UpdateVirtualGrid: collision detected — rebuilding visible canvas range to recover");
+                    Console.WriteLine("UpdateVirtualGrid: collision detected — rebuilding visible canvas range to recover");
+
+                    foreach (var kv in _realizedGridItems.ToList())
+                    {
+                        if (kv.Value != null && canvas.Children.Contains(kv.Value))
+                            canvas.Children.Remove(kv.Value);
+                    }
+                    _realizedGridItems.Clear();
+
+                    for (int i = startIndex; i <= endIndex; i++)
+                    {
+                        if (i < 0 || i >= _currentGridFiles.Count)
+                            continue;
+
+                        var elem = GetViewModeCreateFunc()(_currentGridFiles[i]);
+                        if (elem is FrameworkElement fe)
+                        {
+                            fe.Margin = new Thickness(0);
+                            fe.Width = _virtualItemWidth - 12;
+                            fe.Height = _virtualItemHeight - 12;
+                        }
+
+                        int row = i / _virtualColumns;
+                        int col = i % _virtualColumns;
+                        Canvas.SetLeft(elem, col * _virtualItemWidth);
+                        Canvas.SetTop(elem, row * _virtualItemHeight);
+
+                        canvas.Children.Add(elem);
+                        _realizedGridItems[i] = elem;
+                    }
+                }
+            }
+            catch { }
 
             // Reapply selection highlight if visible
             if (_selectedGridIndex >= 0 && _realizedGridItems.TryGetValue(_selectedGridIndex, out var selectedElem))
@@ -918,10 +1134,8 @@ namespace DupFree.Views
 
         private Func<FileItemViewModel, FrameworkElement> GetViewModeCreateFunc()
         {
-            if (_currentViewMode == "xlarge_icons")
-                return CreateXLargeIconView;
-            else if (_currentViewMode == "large_icons")
-                return CreateLargeIconView;
+            if (_currentViewMode == "grid")
+                return CreateGridIconView;
             else
                 return CreateIconView;
         }
@@ -1022,7 +1236,7 @@ namespace DupFree.Views
                 Padding = new Thickness(0),
                 BorderThickness = new Thickness(0),
                 Tag = file,
-                Margin = new Thickness(12),  // Apply margin to border
+                Margin = new Thickness(4),  // Further reduced margin to tighten layout
                 Cursor = System.Windows.Input.Cursors.Hand
             };
 
@@ -1101,12 +1315,13 @@ namespace DupFree.Views
             return border;
         }
 
-        private FrameworkElement CreateLargeIconView(FileItemViewModel file)
+        private FrameworkElement CreateGridIconView(FileItemViewModel file)
         {
+            int pictureSize = SettingsService.GridPictureSize;
             var panel = new StackPanel
             {
-                Width = 220,
-                Height = 280,
+                Width = pictureSize + 40,                   // narrower container based on user size
+                Height = pictureSize + (SettingsService.ShowGridFilePath ? 92 : 72), // match virtualized item height (element height only)
                 Margin = new Thickness(0),  // Remove margin from panel, apply to border
                 Cursor = System.Windows.Input.Cursors.Hand,
                 VerticalAlignment = VerticalAlignment.Top,
@@ -1128,7 +1343,8 @@ namespace DupFree.Views
 
             panel.ToolTip = file.FilePath;
 
-            panel.Children.Add(CreatePreviewElement(file, 160));
+            // Use the configured grid picture size for the preview so layout stays consistent with settings
+            panel.Children.Add(CreatePreviewElement(file, pictureSize));
 
             var nameBlock = new TextBlock
             {
@@ -1137,14 +1353,14 @@ namespace DupFree.Views
                 FontSize = 13,
                 FontWeight = FontWeights.Bold,
                 TextAlignment = TextAlignment.Center,
-                Margin = new Thickness(0, 8, 0, 0)
+                Margin = new Thickness(0, 6, 0, 0)
             };
             var sizeBlock = new TextBlock
             {
                 Text = file.SizeFormatted,
                 FontSize = 11,
                 TextAlignment = TextAlignment.Center,
-                Margin = new Thickness(0, 4, 0, 0)
+                Margin = new Thickness(0, 2, 0, 0)
             };
 
             var pathBlock = new TextBlock
@@ -1153,7 +1369,7 @@ namespace DupFree.Views
                 FontSize = 9,
                 TextWrapping = TextWrapping.Wrap,
                 TextAlignment = TextAlignment.Center,
-                Margin = new Thickness(0, 4, 0, 0)
+                Margin = new Thickness(0, 2, 0, 0)
             };
 
             nameBlock.SetResourceReference(TextBlock.ForegroundProperty, "WindowForeground");
@@ -1166,6 +1382,7 @@ namespace DupFree.Views
 
             // Context menu
             var cm = new ContextMenu();
+
             var del = new MenuItem { Header = "Delete (Recycle Bin)", Tag = file };
             del.Click += OnDeleteMenuItem_Click;
             cm.Items.Add(del);
@@ -1182,7 +1399,7 @@ namespace DupFree.Views
                 Padding = new Thickness(0),
                 BorderThickness = new Thickness(0),
                 Tag = file,
-                Margin = new Thickness(10),  // Apply margin to border
+                Margin = new Thickness(4),  // Further reduced margin to tighten layout
                 Cursor = System.Windows.Input.Cursors.Hand
             };
 
@@ -1257,162 +1474,33 @@ namespace DupFree.Views
                 e.Handled = true;
             };
 
-            return border;
-        }
-
-        private FrameworkElement CreateXLargeIconView(FileItemViewModel file)
-        {
-            var panel = new StackPanel
+            // Hover highlight — pale box on mouse over (like Windows Explorer)
+            border.MouseEnter += (s, e) =>
             {
-                Width = 360,
-                Height = 420,
-                Margin = new Thickness(0),  // Remove margin from panel, apply to border
-                Cursor = System.Windows.Input.Cursors.Hand,
-                VerticalAlignment = VerticalAlignment.Top,
-                Tag = file,
-                IsHitTestVisible = true
-            };
-
-            // Add click handler for double-click only on panel
-            panel.MouseLeftButtonDown += (s, e) =>
-            {
-                if (e.ClickCount == 2)
+                try
                 {
-                    OpenFile(file);
-                    e.Handled = true;
-                    return;
-                }
-                e.Handled = false;  // Allow event to bubble to border
-            };
-
-            panel.ToolTip = file.FilePath;
-
-            panel.Children.Add(CreatePreviewElement(file, 300));
-
-            var nameBlock = new TextBlock
-            {
-                Text = file.FileName,
-                TextWrapping = TextWrapping.Wrap,
-                FontSize = 16,
-                FontWeight = FontWeights.Bold,
-                TextAlignment = TextAlignment.Center,
-                Margin = new Thickness(0, 8, 0, 0)
-            };
-
-            var sizeBlock = new TextBlock
-            {
-                Text = file.SizeFormatted,
-                FontSize = 13,
-                TextAlignment = TextAlignment.Center,
-                Margin = new Thickness(0, 6, 0, 0)
-            };
-
-            var pathBlock = new TextBlock
-            {
-                Text = file.FilePath,
-                FontSize = 11,
-                TextWrapping = TextWrapping.Wrap,
-                TextAlignment = TextAlignment.Center,
-                Margin = new Thickness(0, 6, 0, 0)
-            };
-
-            panel.Children.Add(nameBlock);
-            nameBlock.SetResourceReference(TextBlock.ForegroundProperty, "WindowForeground");
-            sizeBlock.SetResourceReference(TextBlock.ForegroundProperty, "ControlForeground");
-            pathBlock.SetResourceReference(TextBlock.ForegroundProperty, "ControlForeground");
-            panel.Children.Add(sizeBlock);
-            panel.Children.Add(pathBlock);
-
-            // Context menu
-            var cm = new ContextMenu();
-            var del = new MenuItem { Header = "Delete (Recycle Bin)", Tag = file };
-            del.Click += OnDeleteMenuItem_Click;
-            cm.Items.Add(del);
-            var delFolder = new MenuItem { Header = "Delete all duplicates in this folder", Tag = file };
-            delFolder.Click += OnDeleteAllDuplicatesInFolderMenuItem_Click;
-            cm.Items.Add(delFolder);
-            panel.ContextMenu = cm;
-
-            var border = new Border
-            {
-                Child = panel,
-                Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Colors.Transparent),
-                Padding = new Thickness(0),
-                BorderThickness = new Thickness(0),
-                Tag = file,
-                Margin = new Thickness(12),  // Apply margin to border
-                Cursor = System.Windows.Input.Cursors.Hand
-            };
-
-            // Apply initial selection state
-            if (_selectedGridItems.Contains(file))
-            {
-                border.Background = new SolidColorBrush(Color.FromArgb(120, 59, 130, 246));
-                border.BorderThickness = new Thickness(2);
-                border.BorderBrush = new SolidColorBrush(Color.FromArgb(255, 59, 130, 246));
-            }
-
-            // Add click handler on border to capture entire area
-            border.MouseLeftButtonDown += (s, e) =>
-            {
-                if (e.ClickCount == 2)
-                {
-                    OpenFile(file);
-                    e.Handled = true;
-                    return;
-                }
-                
-                var clickedBorder = s as Border;
-                var clickedFile = clickedBorder.Tag as FileItemViewModel;
-                
-                bool isCtrlPressed = (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control;
-                bool isShiftPressed = (Keyboard.Modifiers & ModifierKeys.Shift) == ModifierKeys.Shift;
-                
-                if (isShiftPressed && _lastSelectedGridItem != null)
-                {
-                    int lastIndex = _currentGridFiles.IndexOf(_lastSelectedGridItem);
-                    int currentIndex = _currentGridFiles.IndexOf(clickedFile);
-                    
-                    if (lastIndex >= 0 && currentIndex >= 0)
+                    if (!_selectedGridItems.Contains(file))
                     {
-                        int start = Math.Min(lastIndex, currentIndex);
-                        int end = Math.Max(lastIndex, currentIndex);
-                        
-                        for (int i = start; i <= end; i++)
-                        {
-                            if (!_selectedGridItems.Contains(_currentGridFiles[i]))
-                            {
-                                _selectedGridItems.Add(_currentGridFiles[i]);
-                            }
-                        }
-                        
-                        RefreshGridItemSelection();
+                        border.Background = new SolidColorBrush(Color.FromArgb(40, 59, 130, 246));
+                        border.BorderThickness = new Thickness(1);
+                        border.BorderBrush = new SolidColorBrush(Color.FromArgb(120, 59, 130, 246));
                     }
                 }
-                else if (isCtrlPressed)
+                catch { }
+            };
+
+            border.MouseLeave += (s, e) =>
+            {
+                try
                 {
-                    if (_selectedGridItems.Contains(clickedFile))
+                    if (!_selectedGridItems.Contains(file))
                     {
-                        _selectedGridItems.Remove(clickedFile);
+                        border.Background = new SolidColorBrush(Colors.Transparent);
+                        border.BorderThickness = new Thickness(0);
+                        border.BorderBrush = null;
                     }
-                    else
-                    {
-                        _selectedGridItems.Add(clickedFile);
-                    }
-                    
-                    RefreshGridItemSelection();
                 }
-                else
-                {
-                    _selectedGridItems.Clear();
-                    _selectedGridItems.Add(clickedFile);
-                    
-                    RefreshGridItemSelection();
-                }
-                
-                _lastSelectedGridItem = clickedFile;
-                UpdateDeleteCount();
-                e.Handled = true;
+                catch { }
             };
 
             return border;
@@ -1438,20 +1526,311 @@ namespace DupFree.Views
 
             grid.Children.Add(placeholder);
 
+            // Let the image stretch uniformly but reserve a small top/bottom padding
+            // so tall (vertical) images don't visually touch the item's border/line.
             var image = new Image
             {
-                Width = size,
-                Height = size,
                 Stretch = System.Windows.Media.Stretch.Uniform,
                 HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 10, 0, 10) // 10px top & bottom padding
             };
 
             // Bind to the thumbnail so updates propagate even if loaded later
             var binding = new Binding("Thumbnail") { Source = file };
             image.SetBinding(Image.SourceProperty, binding);
 
+
+
+            // Hover-to-play for animated GIF/WebP (swap source on hover). If the animated image
+            // hasn't been prepared yet, decode it on-demand in a background task.
+            var ext = Path.GetExtension(file.FilePath).ToLower();
+            bool isAnimatedFile = ext == ".gif" || (ext == ".webp" && Services.ImagePreviewService.IsAnimatedWebP(file.FilePath));
+            CancellationTokenSource gifAnimCts = null;
+            if (isAnimatedFile)
+            {
+                grid.MouseEnter += async (_, __) =>
+                {
+                    try
+                    {
+                        Console.WriteLine($"MouseEnter(animated) -> {file.FilePath}; animated present={file.AnimatedThumbnail != null}");
+
+                        if (ext == ".gif")
+                        {
+                            // prefer cached manual frames for GIFs (more reliable than WPF/stream decoder)
+                            if (file.AnimatedFrames != null && file.AnimatedFrames.Length > 0)
+                            {
+                                if (_activeGifAnimations >= MaxConcurrentGifAnimations)
+                                {
+                                    Console.WriteLine($"Skipping manual GIF animation for {file.FilePath} (limit reached)");
+                                }
+                                else
+                                {
+                                    _activeGifAnimations++;
+                                    gifAnimCts = new CancellationTokenSource();
+                                    _ = Task.Run(async () =>
+                                    {
+                                        try
+                                        {
+                                            var frames = file.AnimatedFrames;
+                                            var delays = file.AnimatedFrameDelays ?? Enumerable.Repeat(80, frames.Length).ToArray();
+                                            int fi = 0;
+                                            Dispatcher.Invoke(() => image.Source = frames[0]);
+                                            while (!gifAnimCts.Token.IsCancellationRequested)
+                                            {
+                                                try { await Task.Delay(delays[fi % delays.Length], gifAnimCts.Token); } catch (TaskCanceledException) { break; }
+                                                fi = (fi + 1) % frames.Length;
+                                                Dispatcher.Invoke(() => image.Source = frames[fi]);
+                                            }
+                                        }
+                                        catch (Exception ex) { Console.WriteLine($"Cached GIF animator error for {file.FilePath}: {ex}"); }
+                                        finally
+                                        {
+                                            _activeGifAnimations = Math.Max(0, _activeGifAnimations - 1);
+                                            gifAnimCts = null;
+                                            Dispatcher.Invoke(() => { try { image.Source = file.Thumbnail; if (ext == ".gif") file.AnimatedThumbnail = null; } catch { } });
+                                        }
+                                    });
+                                }
+                                return;
+                            }
+                        }
+                        else if (file.AnimatedThumbnail != null)
+                        {
+                            // re-assign to force animation start
+                            image.Source = null;
+                            await Task.Yield();
+                            image.Source = file.AnimatedThumbnail;
+                            return;
+                        }
+
+                        // Try Magick -> GIF/WebP bytes -> animated BitmapImage (but avoid stream-based BitmapImage for GIFs,
+                        // as some GIF variants do not animate when created from a stream). For GIF prefer URI-based or manual frames.
+                        var bytes = await Task.Run(() => Services.ImagePreviewService.GetAnimatedImageBytes(file.FilePath, (int)size, (int)size));
+
+                        if (ext != ".gif" && bytes != null)
+                        {
+                            try
+                            {
+                                var animatedBm = Services.ImagePreviewService.CreateBitmapImageFromBytes(bytes, (int)size, freeze: false);
+                                Dispatcher.Invoke(() =>
+                                {
+                                    file.AnimatedThumbnail = animatedBm;
+                                    image.Source = null; // force swap/reload
+                                    image.Source = file.AnimatedThumbnail;
+                                    Console.WriteLine($"Applied animated thumbnail for {file.FilePath} (from bytes)");
+                                });
+                                return;
+                            }
+                            catch (Exception ex)
+                            {
+                                Console.WriteLine($"Animated bytes -> BitmapImage failed: {ex}");
+                            }
+                        }
+
+                        // Fallback for GIF files: load directly from disk (WPF's native GIF animation).
+                        // Use IgnoreImageCache + OnLoad and force a reload of the Image control to avoid a cached static/frame-only image.
+                        if (ext == ".gif")
+                        {
+                            try
+                            {
+                                var uriBm = new BitmapImage();
+                                uriBm.BeginInit();
+                                uriBm.UriSource = new Uri(file.FilePath, UriKind.Absolute);
+                                uriBm.CacheOption = BitmapCacheOption.OnLoad; // fully load so stream isn't required later
+                                uriBm.CreateOptions = BitmapCreateOptions.IgnoreImageCache; // bypass any cached static frame
+                                uriBm.DecodePixelWidth = (int)size;
+                                uriBm.EndInit();
+
+                                file.AnimatedThumbnail = uriBm;
+
+                                // Force Source swap to reliably start WPF GIF animation (clear + reassign briefly)
+                                image.Source = null;
+                                await Task.Yield();
+                                image.Source = uriBm;
+
+                                Console.WriteLine($"Fallback: Uri-based GIF animation applied for {file.FilePath}");
+                                return;
+                            }
+                            catch (Exception ex)
+                            {
+                                Console.WriteLine($"Fallback Uri GIF failed: {ex}");
+                            }
+                        }
+
+                        Console.WriteLine($"No animated preview available for {file.FilePath} — attempting manual frame animation fallback");
+
+                        // Manual frame animation fallback (Magick -> frame PNGs -> dispatcher timer loop).
+                        if (_activeGifAnimations >= MaxConcurrentGifAnimations)
+                        {
+                            Console.WriteLine($"Skipping manual GIF animation for {file.FilePath} (concurrency limit reached)");
+                        }
+                        else
+                        {
+                            _activeGifAnimations++;
+                            gifAnimCts = new CancellationTokenSource();
+                            try
+                            {
+                                var framesInfo = await Task.Run(() => Services.ImagePreviewService.GetAnimatedFrames(file.FilePath, (int)size, (int)size));
+                                var frames = framesInfo.Frames;
+                                var delays = framesInfo.Delays;
+                                if (frames != null && frames.Length > 0)
+                                {
+                                    Console.WriteLine($"Manual GIF animator: frames={frames.Length} for {file.FilePath}");
+                                    int fi = 0;
+                                    Dispatcher.Invoke(() => image.Source = frames[0]);
+                                    while (!gifAnimCts.Token.IsCancellationRequested)
+                                    {
+                                        var wait = delays[fi % delays.Length];
+                                        try { await Task.Delay(wait, gifAnimCts.Token); } catch (TaskCanceledException) { break; }
+                                        fi = (fi + 1) % frames.Length;
+                                        Dispatcher.Invoke(() => image.Source = frames[fi]);
+                                    }
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                Console.WriteLine($"Manual GIF animator failed for {file.FilePath}: {ex}");
+                            }
+                            finally
+                            {
+                                _activeGifAnimations = Math.Max(0, _activeGifAnimations - 1);
+                                gifAnimCts = null;
+                                Dispatcher.Invoke(() => { try { image.Source = file.Thumbnail; if (ext == ".gif") file.AnimatedThumbnail = null; } catch { } });
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Exception in animated MouseEnter for {file.FilePath}: {ex}");
+                    }
+                };
+
+                grid.MouseLeave += (_, __) =>
+                {
+                    try
+                    {
+                        // cancel any manual animator and clear GIF-native animated cache so the tile returns to static state
+                        gifAnimCts?.Cancel();
+                        if (ext == ".gif")
+                        {
+                            try { file.AnimatedThumbnail = null; } catch { }
+                        }
+                        image.Source = file.Thumbnail;
+                        Console.WriteLine($"MouseLeave(animated) -> {file.FilePath}");
+                    }
+                    catch { }
+                };
+            }
+
             grid.Children.Add(image);
+
+            // --- Video hover preview (lightweight) ---
+            MediaElement media = null;
+            CancellationTokenSource hoverCts = null;
+
+            if (Services.ImagePreviewService.IsVideoFile(file.FilePath))
+            {
+                media = new MediaElement
+                {
+                    LoadedBehavior = MediaState.Manual,
+                    UnloadedBehavior = MediaState.Manual,
+                    IsMuted = true,
+                    Stretch = System.Windows.Media.Stretch.UniformToFill,
+                    Visibility = Visibility.Collapsed,
+                    Width = size,
+                    Height = size,
+                    // Do not set Source here to avoid preloading large files — set on first hover.
+                };
+
+                // place media on top of the static image
+                grid.Children.Add(media);
+
+                // Media events for diagnostics and UI fallback
+                media.MediaOpened += (_, __) => Console.WriteLine($"MediaOpened: {file.FilePath} naturalDuration={media.NaturalDuration}");
+                media.MediaFailed += (_, e) =>
+                {
+                    Console.WriteLine($"MediaFailed: {file.FilePath} - {e.ErrorException?.Message ?? e.ErrorException?.ToString()}");
+                    try
+                    {
+                        // hide media control, clear source and show a visible error marker so user knows preview failed
+                        media.Visibility = Visibility.Collapsed;
+                        try { media.Source = null; } catch { }
+                        // Try to show a shell/poster thumbnail so the tile is informative even if playback failed.
+                        try
+                        {
+                            var poster = Services.ImagePreviewService.GetVideoThumbnail(file.FilePath, (int)size, (int)size);
+                            if (poster != null)
+                            {
+                                file.Thumbnail = poster;
+                                image.Source = poster;
+                            }
+                        }
+                        catch { }
+                    }
+                    catch { }
+                };
+
+                grid.MouseEnter += async (_, __) =>
+                {
+                    Console.WriteLine($"MouseEnter(video) -> {file.FilePath}; active={_activeVideoPreviews}");
+
+                    // throttle concurrent previews
+                    if (_activeVideoPreviews >= MaxConcurrentVideoPreviews)
+                    {
+                        Console.WriteLine("Skipping video preview (limit reached)");
+                        return;
+                    }
+
+                    _activeVideoPreviews++;
+                    hoverCts?.Cancel();
+                    hoverCts = new CancellationTokenSource();
+                    try
+                    {
+                        // set Source lazily to avoid preloading every video
+                        if (media.Source == null)
+                        {
+                            media.Source = new Uri(file.FilePath, UriKind.Absolute);
+                            Console.WriteLine($"Media.Source assigned for {file.FilePath}");
+                        }
+
+                        media.Visibility = Visibility.Visible;
+                        media.Position = TimeSpan.Zero;
+                        try
+                        {
+                            media.Play();
+                            Console.WriteLine($"Media.Play invoked for {file.FilePath}");
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"Media.Play failed for {file.FilePath}: {ex}");
+                        }
+
+                        // play a short preview (2.5s) or until mouse leaves
+                        await Task.Delay(2500, hoverCts.Token).ContinueWith(t => { }, TaskScheduler.Default);
+                    }
+                    catch (TaskCanceledException)
+                    {
+                        Console.WriteLine($"Video preview cancelled for {file.FilePath}");
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Video preview error for {file.FilePath}: {ex}");
+                    }
+                    finally
+                    {
+                        try { media.Pause(); media.Visibility = Visibility.Collapsed; Console.WriteLine($"Media stopped for {file.FilePath}"); } catch { }
+                        _activeVideoPreviews = Math.Max(0, _activeVideoPreviews - 1);
+                    }
+                };
+
+                grid.MouseLeave += (_, __) =>
+                {
+                    hoverCts?.Cancel();
+                    hoverCts = null;
+                    try { if (media != null) { media.Stop(); media.Visibility = Visibility.Collapsed; } } catch { }
+                };
+            }
 
             if (file.Thumbnail != null)
                 placeholder.Visibility = Visibility.Collapsed;
@@ -1466,13 +1845,35 @@ namespace DupFree.Views
 
             grid.Loaded += (_, __) =>
             {
-                if (!file.IsPreviewable)
+                // allow video thumbnails and image thumbnails to be prepared here
+                if (!file.IsPreviewable && !Services.ImagePreviewService.IsVideoFile(file.FilePath))
                     return;
 
-                if (file.Thumbnail == null)
+                // For static images we populate thumbnails asynchronously.
+                if (file.Thumbnail == null && !Services.ImagePreviewService.IsVideoFile(file.FilePath))
                 {
                     EnsureThumbnailAsync(file, placeholder, (int)size);
                 }
+
+                // For video files try to obtain a shell/poster thumbnail (non-blocking).
+                if (Services.ImagePreviewService.IsVideoFile(file.FilePath) && file.Thumbnail == null)
+                {
+                    Task.Run(() =>
+                    {
+                        var poster = Services.ImagePreviewService.GetVideoThumbnail(file.FilePath, (int)size, (int)size);
+                        if (poster != null)
+                        {
+                            Dispatcher.Invoke(() =>
+                            {
+                                file.Thumbnail = poster;
+                                placeholder.Visibility = Visibility.Collapsed;
+                            });
+                        }
+                    });
+                }
+
+                // for video files we intentionally do not pre-load video content here
+                // to avoid heavy I/O — media Source is assigned lazily on hover.
             };
 
             return grid;
@@ -1506,15 +1907,94 @@ namespace DupFree.Views
             {
                 await _thumbnailSemaphore.WaitAsync();
 
-                var thumb = await Task.Run(() => Services.ImagePreviewService.GetThumbnail(file.FilePath, size, size));
-                if (thumb == null)
-                    return;
+                var ext = Path.GetExtension(file.FilePath).ToLower();
 
-                Dispatcher.Invoke(() =>
+                // Animated GIF or animated WebP — create a static first-frame for default display
+                // and also prepare an unfrozen animated BitmapImage for hover-play.
+                if (ext == ".gif" || (ext == ".webp" && Services.ImagePreviewService.IsAnimatedWebP(file.FilePath)))
                 {
-                    file.Thumbnail = thumb;
-                    placeholder.Visibility = Visibility.Collapsed;
-                });
+                    Console.WriteLine($"EnsureThumbnailAsync START (animated): {file.FilePath}");
+                    var animatedBytes = await Task.Run(() => Services.ImagePreviewService.GetAnimatedImageBytes(file.FilePath, size, size));
+                    var firstFrame = await Task.Run(() => Services.ImagePreviewService.GetFirstFrameBitmap(file.FilePath, size, size));
+                    // also try extracting manual frames (cached) for reliable GIF animation
+                    var framesInfo = await Task.Run(() => Services.ImagePreviewService.GetAnimatedFrames(file.FilePath, size, size));
+                    Console.WriteLine($"EnsureThumbnailAsync: {file.FilePath} animatedBytes={(animatedBytes != null ? animatedBytes.Length.ToString() : "null")}, firstFrame={(firstFrame != null ? "ok" : "null")}, frames={(framesInfo.Frames != null ? framesInfo.Frames.Length.ToString() : "0")} ");
+
+                    if (animatedBytes == null && firstFrame == null)
+                        return;
+
+                    Dispatcher.Invoke(() =>
+                    {
+                        // show frozen first-frame by default (non-animated)
+                        if (firstFrame != null)
+                        {
+                            file.Thumbnail = firstFrame;
+                        }
+                        else if (framesInfo.Frames != null && framesInfo.Frames.Length > 0)
+                        {
+                            // prefer the first extracted frame as the static thumbnail
+                            file.Thumbnail = framesInfo.Frames[0] as BitmapImage ?? Services.ImagePreviewService.CreateBitmapImageFromBytes(Services.ImagePreviewService.GetAnimatedImageBytes(file.FilePath, size, size), size, freeze: true);
+                        }
+                        else if (animatedBytes != null)
+                        {
+                            file.Thumbnail = Services.ImagePreviewService.CreateBitmapImageFromBytes(animatedBytes, size, freeze: true);
+                        }
+
+                        // Cache manual frames (preferred for hover animation)
+                        if (framesInfo.Frames != null && framesInfo.Frames.Length > 0)
+                        {
+                            file.AnimatedFrames = framesInfo.Frames;
+                            file.AnimatedFrameDelays = framesInfo.Delays;
+                            Console.WriteLine($"EnsureThumbnailAsync: Cached {file.AnimatedFrames.Length} frames for {file.FilePath}");
+                        }
+
+                        // Keep AnimatedThumbnail only as a fallback; do NOT rely on it for GIF animation if manual frames exist.
+                        if ((framesInfo.Frames == null || framesInfo.Frames.Length == 0) && animatedBytes != null)
+                        {
+                            if (ext == ".gif")
+                            {
+                                try
+                                {
+                                    var uriBm = new BitmapImage();
+                                    uriBm.BeginInit();
+                                    uriBm.UriSource = new Uri(file.FilePath, UriKind.Absolute);
+                                    uriBm.CacheOption = BitmapCacheOption.OnLoad;
+                                    uriBm.CreateOptions = BitmapCreateOptions.IgnoreImageCache;
+                                    uriBm.DecodePixelWidth = size;
+                                    uriBm.EndInit();
+                                    file.AnimatedThumbnail = uriBm;
+                                    Console.WriteLine($"EnsureThumbnailAsync: URI AnimatedThumbnail assigned for GIF {file.FilePath}");
+                                }
+                                catch (Exception ex)
+                                {
+                                    Console.WriteLine($"EnsureThumbnailAsync: URI GIF fallback failed for {file.FilePath}: {ex}");
+                                    file.AnimatedThumbnail = Services.ImagePreviewService.CreateBitmapImageFromBytes(animatedBytes, size, freeze: false);
+                                    Console.WriteLine($"EnsureThumbnailAsync: bytes-based AnimatedThumbnail assigned for {file.FilePath}");
+                                }
+                            }
+                            else
+                            {
+                                file.AnimatedThumbnail = Services.ImagePreviewService.CreateBitmapImageFromBytes(animatedBytes, size, freeze: false);
+                                Console.WriteLine($"EnsureThumbnailAsync: AnimatedThumbnail assigned for {file.FilePath}");
+                            }
+                        }
+
+                        placeholder.Visibility = Visibility.Collapsed;
+                    });
+                }
+                else
+                {
+                    // Static images (including static WebP) — safe to create/freeze on background thread
+                    var thumb = await Task.Run(() => Services.ImagePreviewService.GetThumbnail(file.FilePath, size, size));
+                    if (thumb == null)
+                        return;
+
+                    Dispatcher.Invoke(() =>
+                    {
+                        file.Thumbnail = thumb;
+                        placeholder.Visibility = Visibility.Collapsed;
+                    });
+                }
             }
             catch
             {
@@ -1631,61 +2111,136 @@ namespace DupFree.Views
                 var filesOutsideFolder = group.Files.Where(f =>
                     !string.Equals(Path.GetDirectoryName(f.FilePath), folder, StringComparison.OrdinalIgnoreCase)).ToList();
 
+                // Decide which files in this group should be deleted
                 if (filesOutsideFolder.Count > 0)
                 {
-                    // There are copies outside this folder — safe to delete all in this folder
+                    // If group contains files outside the folder, delete all files inside the folder
                     filesToDelete.AddRange(filesInFolder);
                 }
-                else if (filesInFolder.Count > 1)
+                else
                 {
-                    // All copies are in this folder — keep the first, delete the rest
+                    // All files are in the folder — keep one (the first) and delete the rest
                     filesToDelete.AddRange(filesInFolder.Skip(1));
                 }
+
             }
 
-            // Final safety: only delete files that actually exist on disk
-            filesToDelete = filesToDelete.Where(f => File.Exists(f.FilePath)).ToList();
-
+            // After collecting files across all groups, validate selection and prepare deletion
             if (filesToDelete.Count == 0)
             {
-                MessageBox.Show("No duplicate files found in this folder.", "Info", MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBox.Show("No duplicates found in the selected folder.", "Nothing to delete", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
 
-            var confirm = MessageBox.Show(
-                $"Delete {filesToDelete.Count} duplicate file(s) from:\n{folder}?",
-                "Confirm Delete All Duplicates in Folder",
-                MessageBoxButton.YesNo, MessageBoxImage.Warning);
-
-            if (confirm != MessageBoxResult.Yes) return;
-
-            // Show progress bar during deletion
-            ProgressPanel.Visibility = Visibility.Visible;
-            ViewControlPanel.Visibility = Visibility.Collapsed;
-            ProgressStatusText.Text = $"Deleting 0/{filesToDelete.Count}...";
-            ScanProgressIndicator.Width = 0;
-            StatusText.Text = $"Deleting {filesToDelete.Count} duplicate file(s)...";
-
-            // Batch delete: do all file I/O on background thread, report progress to UI
+            // Prepare thumbnail capture, paths and progress variables
+            int gridSize = SettingsService.GridPictureSize;
+            var filesToCapture = SettingsService.MaxRecycleBinSize > 0 ? filesToDelete.Take(SettingsService.MaxRecycleBinSize).ToList() : filesToDelete.ToList();
+            var thumbData = new List<(FileItemViewModel file, BitmapImage thumb)>();
             var pathsToDelete = filesToDelete.Select(f => f.FilePath).ToList();
             int deleted = 0;
             int failed = 0;
-            int total = pathsToDelete.Count;
-
-            var deleteProgress = new Progress<int>((current) =>
+            var deleteProgress = new Progress<int>(p =>
             {
-                double pct = total > 0 ? (current * 100.0) / total : 0;
-                UpdateScanProgressBar(pct);
-                ProgressStatusText.Text = $"Deleting {current}/{total}...";
+                if (pathsToDelete.Count > 0)
+                {
+                    double percentage = (p * 100.0) / pathsToDelete.Count;
+                    ProgressBar.Value = percentage;
+                    UpdateScanProgressBar(percentage);
+                    ProgressStatusText.Text = $"Deleting... {p}/{pathsToDelete.Count}";
+                }
             });
 
-            // Only load thumbnails for the N most recent files that will fit in the recycle bin
-            int maxBin = SettingsService.MaxRecycleBinSize;
-            int thumbCount = maxBin > 0 ? Math.Min(maxBin, filesToDelete.Count) : filesToDelete.Count;
-            // Take the LAST thumbCount items (they'll be inserted first = most recent)
-            var filesToCapture = filesToDelete.Skip(filesToDelete.Count - thumbCount).ToList();
-            var thumbData = new List<(FileItemViewModel file, BitmapImage thumb)>();
-            int gridSize = SettingsService.GridPictureSize;
+            // Show progress UI before performing deletion
+            ProgressPanel.Visibility = Visibility.Visible;
+            ViewControlPanel.Visibility = Visibility.Collapsed;
+            ProgressBar.Value = 0;
+            ProgressStatusText.Text = $"Deleting {pathsToDelete.Count} file(s)...";
+
+            if (_currentGridFiles.Count <= 1000)
+            {
+                    _isVirtualGridActive = false;
+                    ResultsScrollViewer.ScrollChanged -= ResultsScrollViewer_ScrollChanged;
+                    ResultsScrollViewer.SizeChanged -= ResultsScrollViewer_SizeChanged;
+
+                    ResultsPanel.Children.Clear();
+
+                    var wrap = new WrapPanel
+                    {
+                        Orientation = Orientation.Horizontal,
+                        HorizontalAlignment = HorizontalAlignment.Stretch
+                    };
+
+                    // Try to constrain wrap width immediately (may be 0 on first layout).
+                    AdjustWrapPanelWidth(wrap);
+                    ResultsPanel.Children.Add(wrap);
+
+                    // Re-subscribe SizeChanged so the WrapPanel is updated when the ScrollViewer
+                    // finally reports a valid ViewportWidth (prevents first-time overlap).
+                    ResultsScrollViewer.SizeChanged -= ResultsScrollViewer_SizeChanged;
+                    ResultsScrollViewer.SizeChanged += ResultsScrollViewer_SizeChanged;
+
+                    // One-time LayoutUpdated handler — runs after WPF finishes the next layout
+                    // pass and guarantees the WrapPanel will be measured with a valid width.
+                    EventHandler layoutUpdatedHandler2 = null;
+                    layoutUpdatedHandler2 = (s, ev) =>
+                    {
+                        try
+                        {
+                            double wrapWidth = ResultsScrollViewer.ViewportWidth;
+                            if (double.IsNaN(wrapWidth) || wrapWidth <= 0)
+                                wrapWidth = ResultsScrollViewer.ActualWidth;
+
+                            if (!double.IsNaN(wrapWidth) && wrapWidth > 0)
+                            {
+                                AdjustWrapPanelWidth(wrap);
+                                wrap.InvalidateMeasure();
+                                wrap.UpdateLayout();
+                                ResultsScrollViewer.LayoutUpdated -= layoutUpdatedHandler2;
+                            }
+                        }
+                        catch
+                        {
+                            ResultsScrollViewer.LayoutUpdated -= layoutUpdatedHandler2;
+                        }
+                    };
+                    ResultsScrollViewer.LayoutUpdated += layoutUpdatedHandler2;
+
+                    // Add click handler to WrapPanel for deselecting when clicking empty space
+                    wrap.MouseLeftButtonDown += (s, e) =>
+                    {
+                        // Only deselect if clicking directly on the WrapPanel, not on a child
+                        if (s == e.OriginalSource)
+                        {
+                            _selectedGridItems.Clear();
+                            _lastSelectedGridItem = null;
+                            RefreshGridItemSelection();
+                            UpdateDeleteCount();
+                            e.Handled = true;
+                        }
+                    };
+
+                    System.Diagnostics.Debug.WriteLine($"DisplayResults: About to add {_currentGridFiles.Count} items to WrapPanel");
+                    int addedCount = 0;
+                    foreach (var file in _currentGridFiles)
+                    {
+                        wrap.Children.Add(GetViewModeCreateFunc()(file));
+                        addedCount++;
+                    }
+                    System.Diagnostics.Debug.WriteLine($"DisplayResults: Successfully added {addedCount} items to WrapPanel");
+
+                    // Force layout recalculation to fix overlapping/gaps after scan or view switch
+                    wrap.InvalidateMeasure();
+                    wrap.InvalidateArrange();
+                    ResultsPanel.InvalidateMeasure();
+                    ResultsPanel.InvalidateArrange();
+                    ResultsScrollViewer.InvalidateMeasure();
+                    ResultsScrollViewer.InvalidateArrange();
+                    wrap.UpdateLayout();
+                    ResultsPanel.UpdateLayout();
+                    ResultsScrollViewer.UpdateLayout();
+
+                    StatusText.Text = $"Displaying {_currentGridFiles.Count} files (grid)";
+                }
             
             await Task.Run(() =>
             {
@@ -1952,7 +2507,7 @@ namespace DupFree.Views
             // Toggle between list and grid views
             if (_currentViewMode == "list")
             {
-                _currentViewMode = "icons";
+                _currentViewMode = "grid";
                 // Animate sliding indicator to right
                 AnimateViewToggle(36);
             }
@@ -2242,6 +2797,7 @@ namespace DupFree.Views
             }
         }
 
+        [System.Runtime.Versioning.SupportedOSPlatform("windows")]
         private async void DeleteSelectedButton_Click(object sender, RoutedEventArgs e)
         {
             // Check if we're in RecycleBinPanel
@@ -2286,6 +2842,20 @@ namespace DupFree.Views
             {
                 await DeleteFileAsync(file, skipConfirm: true);
             }
+
+            // Clear all selections after deletion to avoid stale selection state
+            _selectedGridItems.Clear();
+            if (ResultsDataGrid != null)
+            {
+                ResultsDataGrid.SelectedItems.Clear();
+                ResultsDataGrid.SelectedIndex = -1;
+            }
+            if (ResultsListView != null)
+            {
+                ResultsListView.SelectedItems.Clear();
+                ResultsListView.SelectedIndex = -1;
+            }
+            UpdateDeleteCount();
         }
 
         private void UnitComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -2374,6 +2944,7 @@ namespace DupFree.Views
             }
         }
 
+        [System.Runtime.Versioning.SupportedOSPlatform("windows")]
         private void RecycleBinScrollViewer_PreviewKeyDown(object sender, KeyEventArgs e)
         {
             // Handle Delete key in recycle bin grid view
@@ -2777,10 +3348,10 @@ namespace DupFree.Views
                 var wrap = new WrapPanel
                 {
                     Orientation = Orientation.Horizontal,
-                    HorizontalAlignment = HorizontalAlignment.Left
+                    HorizontalAlignment = HorizontalAlignment.Stretch
                 };
 
-                // Ensure WrapPanel has a constrained width for proper wrapping
+                // Try to constrain wrap width immediately (may be 0 on first layout).
                 double wrapWidth = RecycleBinScrollViewer.ViewportWidth;
                 if (double.IsNaN(wrapWidth) || wrapWidth <= 0)
                     wrapWidth = RecycleBinScrollViewer.ActualWidth;
@@ -2788,6 +3359,36 @@ namespace DupFree.Views
                     wrap.Width = wrapWidth;
 
                 RecycleBinResultsPanel.Children.Add(wrap);
+
+                // Ensure we update the WrapPanel when the RecycleBin ScrollViewer reports its size
+                RecycleBinScrollViewer.SizeChanged -= RecycleBinScrollViewer_SizeChanged;
+                RecycleBinScrollViewer.SizeChanged += RecycleBinScrollViewer_SizeChanged;
+
+                // One-time LayoutUpdated handler for the recycle-bin WrapPanel so it reflows
+                EventHandler recycleLayoutHandler = null;
+                recycleLayoutHandler = (s, ev) =>
+                {
+                    try
+                    {
+                        double w = RecycleBinScrollViewer.ViewportWidth;
+                        if (double.IsNaN(w) || w <= 0)
+                            w = RecycleBinScrollViewer.ActualWidth;
+                        if (!double.IsNaN(w) && w > 0)
+                        {
+                            wrap.Width = w;
+                            wrap.MinWidth = w;
+                            wrap.MaxWidth = w;
+                            wrap.InvalidateMeasure();
+                            wrap.UpdateLayout();
+                            RecycleBinScrollViewer.LayoutUpdated -= recycleLayoutHandler;
+                        }
+                    }
+                    catch
+                    {
+                        RecycleBinScrollViewer.LayoutUpdated -= recycleLayoutHandler;
+                    }
+                };
+                RecycleBinScrollViewer.LayoutUpdated += recycleLayoutHandler;
 
                 // Create grid items for each deleted file
                 foreach (var deletedFile in _recycleBin)
@@ -2997,6 +3598,7 @@ namespace DupFree.Views
             UpdateRecycleBinCount();
         }
 
+        [System.Runtime.Versioning.SupportedOSPlatform("windows")]
         private void RecoverSelectedFiles()
         {
             // Get selected items based on current view mode
@@ -3091,6 +3693,7 @@ namespace DupFree.Views
             }
         }
 
+        [System.Runtime.Versioning.SupportedOSPlatform("windows")]
         private bool RestoreFromRecycleBin(string filePath)
         {
             try

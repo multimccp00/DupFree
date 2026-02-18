@@ -17,7 +17,7 @@ Welcome to the DupFree project — a Windows desktop application for finding dup
 
 - **Language**: C# (.NET 8)
 - **UI Framework**: WPF (Windows Presentation Foundation)
-- **Version**: v1.1
+- **Version**: v1.2
 - **Author**: Miguel Campos
 
 ## Core Capabilities

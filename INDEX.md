@@ -14,6 +14,6 @@
 
 ## Project Info
 
-- **Version**: v1.1
+- **Version**: v1.2
 - **Framework**: .NET 8 (net8.0-windows), WPF
 - **Status**: In Development

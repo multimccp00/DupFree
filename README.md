@@ -69,7 +69,7 @@ DupFree/
 
 ## Version
 
-**v1.1** — In Development  
+**v1.2** — In Development  
 **Author**: Miguel Campos
 
 ## License

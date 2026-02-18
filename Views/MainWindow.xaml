@@ -36,7 +36,7 @@
                         <Image Source="/Assets/dupfree_logo.png" Width="40" Height="40" Margin="0,0,12,0" RenderOptions.BitmapScalingMode="HighQuality" />
                         <StackPanel VerticalAlignment="Center">
                             <TextBlock Text="DupFree" FontSize="14" FontWeight="Bold" Foreground="{DynamicResource WindowForeground}" />
-                            <TextBlock Text="v1.1" FontSize="11" Foreground="{DynamicResource MutedForeground}" />
+                            <TextBlock Text="v1.2" FontSize="11" Foreground="{DynamicResource MutedForeground}" />
                         </StackPanel>
                     </StackPanel>
 
@@ -548,7 +548,7 @@
                                     <Border Background="{DynamicResource StorageBackground}" CornerRadius="8" Padding="16" Margin="0,8,0,0">
                                         <StackPanel>
                                             <TextBlock Text="Made by Miguel Campos" FontSize="14" FontWeight="SemiBold" HorizontalAlignment="Center" />
-                                            <TextBlock Text="Version 1.1" FontSize="12" Foreground="{DynamicResource MutedForeground}" HorizontalAlignment="Center" Margin="0,4,0,0" />
+                                            <TextBlock Text="Version 1.2" FontSize="12" Foreground="{DynamicResource MutedForeground}" HorizontalAlignment="Center" Margin="0,4,0,0" />
                                         </StackPanel>
                                     </Border>
                                 </StackPanel>

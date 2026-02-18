@@ -4,7 +4,7 @@
 
 **DupFree** is a Windows desktop application built with C# (.NET 8) and WPF that finds duplicate files and visually similar images. It features GPU-accelerated SSIM comparison, perceptual hashing, a dark-themed modern UI, and an in-app recycle bin.
 
-**Version**: v1.1  
+**Version**: v1.2  
 **Author**: Miguel Campos  
 **Status**: In Development
 

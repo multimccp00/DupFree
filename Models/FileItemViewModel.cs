@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.ComponentModel;
+using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Linq;
 
@@ -29,6 +30,49 @@ namespace DupFree.Models
                 {
                     _thumbnail = value;
                     OnPropertyChanged(nameof(Thumbnail));
+                }
+            }
+        }
+
+        private BitmapImage _animatedThumbnail;
+        public BitmapImage AnimatedThumbnail
+        {
+            get => _animatedThumbnail;
+            set
+            {
+                if (_animatedThumbnail != value)
+                {
+                    _animatedThumbnail = value;
+                    OnPropertyChanged(nameof(AnimatedThumbnail));
+                }
+            }
+        }
+
+        // Manual-frame animator cache (used for robust GIF hover animation)
+        private BitmapSource[] _animatedFrames;
+        public BitmapSource[] AnimatedFrames
+        {
+            get => _animatedFrames;
+            set
+            {
+                if (_animatedFrames != value)
+                {
+                    _animatedFrames = value;
+                    OnPropertyChanged(nameof(AnimatedFrames));
+                }
+            }
+        }
+
+        private int[] _animatedFrameDelays;
+        public int[] AnimatedFrameDelays
+        {
+            get => _animatedFrameDelays;
+            set
+            {
+                if (_animatedFrameDelays != value)
+                {
+                    _animatedFrameDelays = value;
+                    OnPropertyChanged(nameof(AnimatedFrameDelays));
                 }
             }
         }
