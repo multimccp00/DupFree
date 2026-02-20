@@ -3,7 +3,8 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:local="clr-namespace:DupFree.Views"
     xmlns:sys="clr-namespace:System;assembly=mscorlib"
-    Title="DupFree - Duplicate File Finder" Height="900" Width="1400"
+    xmlns:properties="clr-namespace:DupFree.Properties"
+    Title="{x:Static properties:Resources.Settings}" Height="900" Width="1400"
     Icon="/Assets/dupfree_logo.png"
     Background="{DynamicResource AppBackground}"
     Foreground="{DynamicResource WindowForeground}"
@@ -43,37 +44,37 @@
                     <ToggleButton Name="BrowseButton" Click="BrowseButton_Click" Style="{StaticResource SidebarToggle}" Margin="0,0,0,8" Height="48" Padding="16,12" VerticalContentAlignment="Center">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="📁" Margin="0,0,12,0" FontSize="16" VerticalAlignment="Center" />
-                            <TextBlock Text="Browse" VerticalAlignment="Center" />
+                            <TextBlock Text="{x:Static properties:Resources.Browse}" VerticalAlignment="Center" />
                         </StackPanel>
                     </ToggleButton>
                     <ToggleButton Name="SidebarScanButton" Click="SidebarScanButton_Click" Style="{StaticResource SidebarToggle}" IsChecked="True" Margin="0,0,0,8" Height="48" Padding="16,12" VerticalContentAlignment="Center">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="🔍" Margin="0,0,12,0" FontSize="16" VerticalAlignment="Center" />
-                            <TextBlock Text="Duplicate Files" FontWeight="Medium" VerticalAlignment="Center" />
+                            <TextBlock Text="{x:Static properties:Resources.DuplicateFiles}" FontWeight="Medium" VerticalAlignment="Center" />
                         </StackPanel>
                     </ToggleButton>
                     <ToggleButton Name="SidebarSimilarImagesButton" Click="SidebarSimilarImagesButton_Click" Style="{StaticResource SidebarToggle}" Margin="0,0,0,8" Height="48" Padding="16,12" VerticalContentAlignment="Center">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="🖼" Margin="0,0,12,0" FontSize="16" VerticalAlignment="Center" />
-                            <TextBlock Text="Similar Images" VerticalAlignment="Center" />
+                            <TextBlock Text="{x:Static properties:Resources.SimilarImages}" VerticalAlignment="Center" />
                         </StackPanel>
                     </ToggleButton>
                     <ToggleButton Name="SidebarRecycleBinButton" Click="SidebarRecycleBinButton_Click" Style="{StaticResource SidebarToggle}" Margin="0,0,0,8" Height="48" Padding="16,12" VerticalContentAlignment="Center">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="🗑" Margin="0,0,12,0" FontSize="16" VerticalAlignment="Center" />
-                            <TextBlock Text="Recycle Bin" VerticalAlignment="Center" />
+                            <TextBlock Text="{x:Static properties:Resources.RecycleBin}" VerticalAlignment="Center" />
                         </StackPanel>
                     </ToggleButton>
                     <ToggleButton Name="SidebarSettingsButton" Click="SidebarSettingsButton_Click" Style="{StaticResource SidebarToggle}" Margin="0,0,0,8" Height="48" Padding="16,12" VerticalContentAlignment="Center">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="⚙" Margin="0,0,12,0" FontSize="16" VerticalAlignment="Center" />
-                            <TextBlock Text="Settings" VerticalAlignment="Center" />
+                            <TextBlock Text="{x:Static properties:Resources.Settings}" VerticalAlignment="Center" />
                         </StackPanel>
                     </ToggleButton>
                     <ToggleButton Name="SidebarHelpButton" Click="SidebarHelpButton_Click" Style="{StaticResource SidebarToggle}" Margin="0,0,0,8" Height="48" Padding="16,12" VerticalContentAlignment="Center">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="❔" Margin="0,0,12,0" FontSize="16" VerticalAlignment="Center" />
-                            <TextBlock Text="Help" VerticalAlignment="Center" />
+                            <TextBlock Text="{x:Static properties:Resources.Help}" VerticalAlignment="Center" />
                         </StackPanel>
                     </ToggleButton>
                 </StackPanel>
@@ -341,12 +342,12 @@
                     <Border Background="{DynamicResource AppBackground}" CornerRadius="12" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" Padding="20">
                         <ScrollViewer VerticalScrollBarVisibility="Auto">
                             <StackPanel MaxWidth="800">
-                                <TextBlock Text="Settings" FontSize="24" FontWeight="SemiBold" Margin="0,0,0,24" />
+                                <TextBlock Text="{x:Static properties:Resources.Settings}" FontSize="24" FontWeight="SemiBold" Margin="0,0,0,24" />
                                 
                                 <!-- File Size Limits Section -->
                                 <Border Background="{DynamicResource CardBackground}" CornerRadius="8" Padding="20" Margin="0,0,0,16">
                                     <StackPanel>
-                                        <TextBlock Text="File Size Limits" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,12" />
+                                        <TextBlock Text="{x:Static properties:Resources.FileSizeLimits}" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,12" />
                                         <TextBlock Text="Set minimum and maximum file sizes to scan (0 = no limit)" Foreground="{DynamicResource MutedForeground}" Margin="0,0,0,16" />
                                         
                                         <Grid>
@@ -376,7 +377,7 @@
                                 <!-- Duplicate Count Limit Section -->
                                 <Border Background="{DynamicResource CardBackground}" CornerRadius="8" Padding="20" Margin="0,0,0,16">
                                     <StackPanel>
-                                        <TextBlock Text="Duplicate Display Limit" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,12" />
+                                        <TextBlock Text="{x:Static properties:Resources.DuplicateDisplayLimit}" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,12" />
                                         <TextBlock Text="Limit the number of duplicate files to display (0 = show all)" Foreground="{DynamicResource MutedForeground}" Margin="0,0,0,16" />
                                         
                                         <StackPanel>
@@ -393,7 +394,7 @@
                                 <!-- Delete Confirmation Section -->
                                 <Border Background="{DynamicResource CardBackground}" CornerRadius="8" Padding="20" Margin="0,0,0,16">
                                     <StackPanel>
-                                        <TextBlock Text="Delete Confirmation" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,12" />
+                                        <TextBlock Text="{x:Static properties:Resources.DeleteConfirmation}" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,12" />
                                         <TextBlock Text="Ask for confirmation before deleting files" Foreground="{DynamicResource MutedForeground}" Margin="0,0,0,16" />
 
                                         <CheckBox Name="ConfirmDeleteCheckBox" Content="Show delete confirmation dialog" Style="{StaticResource SettingsCheckBox}" Checked="ConfirmDeleteCheckBox_Changed" Unchecked="ConfirmDeleteCheckBox_Changed" />
@@ -403,7 +404,7 @@
                                 <!-- Grid View Picture Size Section -->
                                 <Border Background="{DynamicResource CardBackground}" CornerRadius="8" Padding="20" Margin="0,0,0,16">
                                     <StackPanel>
-                                        <TextBlock Text="Grid View Picture Size" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,12" />
+                                        <TextBlock Text="{x:Static properties:Resources.GridViewPictureSize}" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,12" />
                                         <TextBlock Text="Adjust the size of pictures displayed in grid view" Foreground="{DynamicResource MutedForeground}" Margin="0,0,0,16" />
                                         
                                         <StackPanel>
@@ -441,7 +442,7 @@
                                 <!-- Grid View File Path Display Section -->
                                 <Border Background="{DynamicResource CardBackground}" CornerRadius="8" Padding="20" Margin="0,0,0,16">
                                     <StackPanel>
-                                        <TextBlock Text="Grid View File Path Display" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,12" />
+                                        <TextBlock Text="{x:Static properties:Resources.GridViewFilePathDisplay}" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,12" />
                                         <TextBlock Text="Show or hide file path below filename in grid view" Foreground="{DynamicResource MutedForeground}" Margin="0,0,0,16" />
                                         
                                         <CheckBox Name="ShowGridFilePathCheckBox" Content="Show file path below filename" Margin="0,0,0,16"
@@ -456,7 +457,7 @@
                                 <!-- Recycle Bin Size Section -->
                                 <Border Background="{DynamicResource CardBackground}" CornerRadius="8" Padding="20" Margin="0,0,0,16">
                                     <StackPanel>
-                                        <TextBlock Text="Recycle Bin Size" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,12" />
+                                        <TextBlock Text="{x:Static properties:Resources.RecycleBinSize}" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,12" />
                                         <TextBlock Text="Maximum number of deleted files to keep in the recycle bin (0 = no limit)" Foreground="{DynamicResource MutedForeground}" Margin="0,0,0,16" />
                                         
                                         <StackPanel>
@@ -473,7 +474,7 @@
                                 <!-- Scan Timer Debug Section -->
                                 <Border Background="{DynamicResource CardBackground}" CornerRadius="8" Padding="20" Margin="0,0,0,16">
                                     <StackPanel>
-                                        <TextBlock Text="Scan Timer (Debug)" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,12" />
+                                        <TextBlock Text="{x:Static properties:Resources.ScanTimerDebug}" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,12" />
                                         <TextBlock Text="Display elapsed time during similar-image scans" Foreground="{DynamicResource MutedForeground}" Margin="0,0,0,16" />
                                         
                                         <CheckBox Name="ShowScanTimerCheckBox" Content="Show elapsed time" Margin="0,0,0,16"
@@ -484,6 +485,11 @@
                                         </Button>
                                     </StackPanel>
                                 </Border>
+
+                                <!-- Reset all settings to their default values -->
+                                <Button Name="ResetSettingsButton" Click="ResetSettingsButton_Click" Style="{StaticResource PrimaryButton}" Margin="0,8,0,24" Padding="16,10" HorizontalAlignment="Left">
+                                    {x:Static properties:Resources.ResetToDefaults}
+                                </Button>
 
                                 
                             </StackPanel>
@@ -545,6 +551,19 @@
                                     <TextBlock Text="• Customizable settings and display options" 
                                                Foreground="{DynamicResource MutedForeground}" Margin="0,0,0,20" />
                                     
+                                    <!-- Support section: report or view log -->
+                                    <Border Background="{DynamicResource CardBackground}" CornerRadius="8" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" Padding="16" Margin="0,0,0,16">
+                                        <StackPanel>
+                                            <TextBlock Text="Having trouble?" FontSize="16" FontWeight="SemiBold" HorizontalAlignment="Center" />
+                                            <TextBlock Text="Report an issue or open the log file below." FontSize="12" Foreground="{DynamicResource MutedForeground}" HorizontalAlignment="Center" Margin="0,4,0,0" />
+                                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,8,0,0">
+                                                <Button Content="Report Issue" Click="ReportIssueButton_Click" Style="{StaticResource PrimaryButton}" Margin="0,0,8,0" />
+                                                <Button Content="View Log" Click="OpenLogButton_Click" Style="{StaticResource PrimaryButton}" Margin="0,0,8,0" />
+                                                <Button x:Name="CheckDependenciesButton" Content="Check Dependencies" Click="CheckDependenciesButton_Click" Style="{StaticResource PrimaryButton}" />
+                                            </StackPanel>
+                                        </StackPanel>
+                                    </Border>
+
                                     <Border Background="{DynamicResource StorageBackground}" CornerRadius="8" Padding="16" Margin="0,8,0,0">
                                         <StackPanel>
                                             <TextBlock Text="Made by Miguel Campos" FontSize="14" FontWeight="SemiBold" HorizontalAlignment="Center" />

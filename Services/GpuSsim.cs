@@ -14,9 +14,9 @@ namespace DupFree.Services
     /// </summary>
     public class GpuSsim : IDisposable
     {
-        private ID3D11Device _device;
-        private ID3D11DeviceContext _ctx;
-        private ID3D11ComputeShader _cs;
+        private ID3D11Device? _device;
+        private ID3D11DeviceContext? _ctx;
+        private ID3D11ComputeShader? _cs;
         private bool _initialized;
         private readonly object _gpuLock = new();
 
@@ -74,12 +74,12 @@ void CSMain(uint3 DTid : SV_DispatchThreadID)
             {
                 // 1. Create D3D11 hardware device
                 var hr = D3D11CreateDevice(
-                    null, DriverType.Hardware,
-                    DeviceCreationFlags.None, null,
+                    null!, DriverType.Hardware,
+                    DeviceCreationFlags.None, null!,
                     out _device, out _ctx);
                 if (hr.Failure)
                 {
-                    Console.WriteLine("GpuSsim: D3D11CreateDevice failed");
+                    Log.Error("GpuSsim: D3D11CreateDevice failed");
                     return false;
                 }
 
@@ -93,19 +93,19 @@ void CSMain(uint3 DTid : SV_DispatchThreadID)
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"GpuSsim: shader compile failed – {ex.Message}");
+                    Log.Error($"GpuSsim: shader compile failed – {ex.Message}");
                     return false;
                 }
 
                 // 3. Create compute shader
                 _cs = _device.CreateComputeShader(bytecode);
                 _initialized = true;
-                Console.WriteLine($"GpuSsim: ready ({bytecode.Length} B shader)");
+                Log.Info($"GpuSsim: ready ({bytecode.Length} B shader)");
                 return true;
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"GpuSsim: Init – {ex.Message}");
+                Log.Error($"GpuSsim: Init – {ex.Message}");
                 return false;
             }
         }
@@ -124,12 +124,16 @@ void CSMain(uint3 DTid : SV_DispatchThreadID)
 
             const int kGroup = 64;
             // Use enough groups so each thread handles ~64 pixels
-            int numGroups  = Math.Clamp((n + kGroup * 64 - 1) / (kGroup * 64), 1, 256);
+            int numGroups = Math.Clamp((n + kGroup * 64 - 1) / (kGroup * 64), 1, 256);
             int numThreads = numGroups * kGroup;
-            int outCount   = numThreads * 5;
+            int outCount = numThreads * 5;
 
             lock (_gpuLock)
             {
+                var device = _device!;
+                var ctx = _ctx!;
+                var cs = _cs!;
+
                 var pinA = GCHandle.Alloc(a, GCHandleType.Pinned);
                 var pinB = GCHandle.Alloc(b, GCHandleType.Pinned);
                 try
@@ -143,13 +147,13 @@ void CSMain(uint3 DTid : SV_DispatchThreadID)
                         ResourceOptionFlags.BufferStructured,
                         sizeof(float));
 
-                    using var gpuA = _device.CreateBuffer(inDesc,
+                    using var gpuA = device.CreateBuffer(inDesc,
                                         new SubresourceData(pinA.AddrOfPinnedObject()));
-                    using var gpuB = _device.CreateBuffer(inDesc,
+                    using var gpuB = device.CreateBuffer(inDesc,
                                         new SubresourceData(pinB.AddrOfPinnedObject()));
 
-                    using var srvA = _device.CreateShaderResourceView(gpuA);
-                    using var srvB = _device.CreateShaderResourceView(gpuB);
+                    using var srvA = device.CreateShaderResourceView(gpuA);
+                    using var srvB = device.CreateShaderResourceView(gpuB);
 
                     // ── Output buffer (5 floats per thread) ──────────────
                     var outDesc = new BufferDescription(
@@ -159,15 +163,15 @@ void CSMain(uint3 DTid : SV_DispatchThreadID)
                         CpuAccessFlags.None,
                         ResourceOptionFlags.BufferStructured,
                         sizeof(float));
-                    using var outBuf = _device.CreateBuffer(outDesc);
-                    using var uav    = _device.CreateUnorderedAccessView(outBuf);
+                    using var outBuf = device.CreateBuffer(outDesc);
+                    using var uav = device.CreateUnorderedAccessView(outBuf);
 
                     // ── Constant buffer (16-byte aligned) ────────────────
                     var cbBytes = new byte[16];
                     BitConverter.TryWriteBytes(cbBytes.AsSpan(0, 4), (uint)n);
                     BitConverter.TryWriteBytes(cbBytes.AsSpan(4, 4), (uint)numThreads);
                     var cbPin = GCHandle.Alloc(cbBytes, GCHandleType.Pinned);
-                    using var cb = _device.CreateBuffer(
+                    using var cb = device.CreateBuffer(
                         new BufferDescription(16, BindFlags.ConstantBuffer,
                             ResourceUsage.Default, CpuAccessFlags.None,
                             ResourceOptionFlags.None, 0),
@@ -175,7 +179,7 @@ void CSMain(uint3 DTid : SV_DispatchThreadID)
                     cbPin.Free();
 
                     // ── Staging buffer for readback ──────────────────────
-                    using var staging = _device.CreateBuffer(
+                    using var staging = device.CreateBuffer(
                         new BufferDescription(
                             sizeof(float) * outCount,
                             BindFlags.None,
@@ -184,31 +188,31 @@ void CSMain(uint3 DTid : SV_DispatchThreadID)
                             ResourceOptionFlags.None, 0));
 
                     // ── Dispatch ─────────────────────────────────────────
-                    _ctx.CSSetShader(_cs);
-                    _ctx.CSSetShaderResources(0, new[] { srvA, srvB });
-                    _ctx.CSSetUnorderedAccessViews(0, new[] { uav });
-                    _ctx.CSSetConstantBuffer(0, cb);
-                    _ctx.Dispatch(numGroups, 1, 1);
+                    ctx.CSSetShader(cs);
+                    ctx.CSSetShaderResources(0, new ID3D11ShaderResourceView[] { srvA!, srvB! });
+                    ctx.CSSetUnorderedAccessViews(0, new ID3D11UnorderedAccessView[] { uav! });
+                    ctx.CSSetConstantBuffer(0, cb);
+                    ctx.Dispatch(numGroups, 1, 1);
 
                     // ── Readback ─────────────────────────────────────────
-                    _ctx.CopyResource(staging, outBuf);
-                    var mapped = _ctx.Map(staging, 0, MapMode.Read, Vortice.Direct3D11.MapFlags.None);
+                    ctx.CopyResource(staging, outBuf);
+                    var mapped = ctx.Map(staging, 0, MapMode.Read, Vortice.Direct3D11.MapFlags.None);
                     var vals = new float[outCount];
                     Marshal.Copy(mapped.DataPointer, vals, 0, outCount);
-                    _ctx.Unmap(staging, 0);
+                    ctx.Unmap(staging, 0);
 
                     // ── Unbind ───────────────────────────────────────────
-                    _ctx.CSSetShader(null);
-                    _ctx.CSSetShaderResources(0, new ID3D11ShaderResourceView[] { null, null });
-                    _ctx.CSSetUnorderedAccessViews(0, new ID3D11UnorderedAccessView[] { null });
+                    ctx.CSSetShader((ID3D11ComputeShader?)null);
+                    ctx.CSSetShaderResources(0, new ID3D11ShaderResourceView[] { (ID3D11ShaderResourceView)null!, (ID3D11ShaderResourceView)null! });
+                    ctx.CSSetUnorderedAccessViews(0, new ID3D11UnorderedAccessView[] { (ID3D11UnorderedAccessView)null! });
 
                     // ── CPU reduce + SSIM ────────────────────────────────
                     double sA = 0, sB = 0, sA2 = 0, sB2 = 0, sAB = 0;
                     for (int t = 0; t < numThreads; t++)
                     {
                         int o = t * 5;
-                        sA  += vals[o];
-                        sB  += vals[o + 1];
+                        sA += vals[o];
+                        sB += vals[o + 1];
                         sA2 += vals[o + 2];
                         sB2 += vals[o + 3];
                         sAB += vals[o + 4];
@@ -217,7 +221,7 @@ void CSMain(uint3 DTid : SV_DispatchThreadID)
                     double muA = sA / n, muB = sB / n;
                     double varA = sA2 / n - muA * muA;
                     double varB = sB2 / n - muB * muB;
-                    double cov  = sAB / n - muA * muB;
+                    double cov = sAB / n - muA * muB;
 
                     const double K1 = 0.01, K2 = 0.03, L = 255.0;
                     double C1 = (K1 * L) * (K1 * L);
@@ -262,7 +266,7 @@ void CSMain(uint3 DTid : SV_DispatchThreadID)
             var vMuB = new System.Numerics.Vector<float>((float)muB);
             var vVarA = System.Numerics.Vector<float>.Zero;
             var vVarB = System.Numerics.Vector<float>.Zero;
-            var vCov  = System.Numerics.Vector<float>.Zero;
+            var vCov = System.Numerics.Vector<float>.Zero;
             i = 0;
             for (; i + vecSz <= n; i += vecSz)
             {
@@ -270,7 +274,7 @@ void CSMain(uint3 DTid : SV_DispatchThreadID)
                 var db = new System.Numerics.Vector<float>(b, i) - vMuB;
                 vVarA += da * da;
                 vVarB += db * db;
-                vCov  += da * db;
+                vCov += da * db;
             }
             double varA = 0, varB = 0, cov = 0;
             for (int k = 0; k < vecSz; k++) { varA += vVarA[k]; varB += vVarB[k]; cov += vCov[k]; }

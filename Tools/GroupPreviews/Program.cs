@@ -4,6 +4,7 @@ using System.Drawing;
 using System.Drawing.Imaging;
 using System.IO;
 using System.Linq;
+using DupFree.Services;
 
 class Program
 {
@@ -20,11 +21,11 @@ class Program
 
         if (!File.Exists(groupsCsv))
         {
-            Console.WriteLine($"Groups CSV not found: {groupsCsv}");
+            Log.Error($"Groups CSV not found: {groupsCsv}");
             return 2;
         }
 
-        Console.WriteLine($"Reading groups from: {groupsCsv}");
+        Log.Info($"Reading groups from: {groupsCsv}");
         var lines = File.ReadAllLines(groupsCsv).Skip(1).Where(l => !string.IsNullOrWhiteSpace(l)).ToList();
         int count = 0;
         foreach (var line in lines)
@@ -82,8 +83,8 @@ class Program
                 }
 
                 string outPath = Path.Combine(outDir, gid + ".jpg");
-                try { canvas.Save(outPath, ImageFormat.Jpeg); Console.WriteLine($"Wrote {outPath}"); }
-                catch (Exception ex) { Console.WriteLine($"Failed to save {outPath}: {ex.Message}"); }
+                try { canvas.Save(outPath, ImageFormat.Jpeg); Log.Info($"Wrote {outPath}"); }
+                catch (Exception ex) { Log.Error($"Failed to save {outPath}: {ex.Message}"); }
             }
 
             // dispose thumbs
@@ -91,7 +92,7 @@ class Program
             count++;
         }
 
-        Console.WriteLine($"Generated {count} group previews in {outDir}");
+        Log.Info($"Generated {count} group previews in {outDir}");
         return 0;
     }
 

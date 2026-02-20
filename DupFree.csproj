@@ -3,19 +3,30 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
     <UseWPF>true</UseWPF>
     <WindowsDesktopTargetPlatformVersion>10.0.26100.0</WindowsDesktopTargetPlatformVersion>
     <AssemblyName>DupFree</AssemblyName>
     <RootNamespace>DupFree</RootNamespace>
-    <ApplicationManifest>app.manifest</ApplicationManifest>
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
     <GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
+    <EnableDefaultEmbeddedResourceItems>false</EnableDefaultEmbeddedResourceItems>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
 
   <ItemGroup>
     <Resource Include="Assets\dupfree_logo.png" />
   </ItemGroup>
+
+  <!-- explicit resource entry for localization -->
+  <ItemGroup>
+    <EmbeddedResource Include="Properties\Resources.resx">
+      <Generator>ResXFileCodeGenerator</Generator>
+      <LastGenOutput>Resources.Designer.cs</LastGenOutput>
+    </EmbeddedResource>
+  </ItemGroup>
+
 
   <ItemGroup>
     <PackageReference Include="Magick.NET-Q16-AnyCPU" Version="14.10.2" />
@@ -25,6 +36,8 @@
     <PackageReference Include="Vortice.DXGI" Version="3.2.0" />
     <PackageReference Include="Vortice.D3DCompiler" Version="3.2.0" />
     <PackageReference Include="Vortice.Mathematics" Version="2.1.0" />
+    <!-- Static analysis package (analyzers only) -->
+    <PackageReference Include="Microsoft.CodeAnalysis.NetAnalyzers" Version="7.3.0" PrivateAssets="all" />
   </ItemGroup>
 
   <!-- Exclude the Tools subfolder from compilation -->

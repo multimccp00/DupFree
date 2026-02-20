@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using DupFree.Services;
 
 class Program
 {
@@ -16,18 +17,17 @@ class Program
 
         if (!File.Exists(csv))
         {
-            Console.WriteLine($"Input CSV not found: {csv}");
+            Log.Error($"Input CSV not found: {csv}");
             return 2;
         }
 
-        Console.WriteLine($"Parsing edges from: {csv}");
-        Console.WriteLine($"Composite threshold: {threshold:F4}");
+        Log.Info($"Parsing edges from: {csv}");
+        Log.Info($"Composite threshold: {threshold:F4}");
 
         var pathToIdx = new Dictionary<string,int>(StringComparer.OrdinalIgnoreCase);
         var parent = new List<int>();
 
-        Func<int,int> find = null;
-        find = x => parent[x] == x ? x : (parent[x] = find(parent[x]));
+        int find(int x) => parent[x] == x ? x : (parent[x] = find(parent[x]));
         Action<int,int> unite = (a,b) => {
             a = find(a); b = find(b);
             if (a==b) return;
@@ -72,10 +72,10 @@ class Program
 
         var filtered = groups.Values.Where(g => g.Count >= 2).ToList();
 
-        Console.WriteLine($"Kept pairs: {keptPairs}");
-        Console.WriteLine($"Found groups (size>=2): {filtered.Count}");
+        Log.Info($"Kept pairs: {keptPairs}");
+        Log.Info($"Found groups (size>=2): {filtered.Count}");
         int totalImgs = filtered.Sum(g => g.Count);
-        Console.WriteLine($"Total images in groups: {totalImgs}");
+        Log.Info($"Total images in groups: {totalImgs}");
 
         // write groups CSV
         using (var sw = new StreamWriter(outGroups))
@@ -90,7 +90,7 @@ class Program
             }
         }
 
-        Console.WriteLine($"Wrote groups CSV: {outGroups}");
+        Log.Info($"Wrote groups CSV: {outGroups}");
         return 0;
     }
 

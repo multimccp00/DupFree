@@ -1,0 +1,176 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:import namespace="http://www.w3.org/XML/1998/namespace" />
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="metadata">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" />
+              </xsd:sequence>
+              <xsd:attribute name="name" use="required" type="xsd:string" />
+              <xsd:attribute name="type" type="xsd:string" />
+              <xsd:attribute name="mimetype" type="xsd:string" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="assembly">
+            <xsd:complexType>
+              <xsd:attribute name="alias" type="xsd:string" />
+              <xsd:attribute name="name" type="xsd:string" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+                <xsd:element name="comment" type="xsd:string" minOccurs="0" msdata:Ordinal="2" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" />
+              <xsd:attribute name="type" type="xsd:string" />
+              <xsd:attribute name="mimetype" type="xsd:string" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="resheader">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+              </xsd:sequence>
+              <xsd:attribute name="name" use="required" type="xsd:string" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, ...</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, ...</value>
+  </resheader>
+  <!-- UI strings -->
+  <data name="PermissionDeniedTitle" xml:space="preserve">
+    <value>Permission Denied</value>
+  </data>
+  <data name="PermissionDeniedMessage" xml:space="preserve">
+    <value>Cannot access the selected folder. Please check your permissions and try a different location.</value>
+  </data>
+  <data name="Settings" xml:space="preserve">
+    <value>Settings</value>
+  </data>
+  <data name="FileSizeLimits" xml:space="preserve">
+    <value>File Size Limits</value>
+  </data>
+  <data name="DuplicateDisplayLimit" xml:space="preserve">
+    <value>Duplicate Display Limit</value>
+  </data>
+  <data name="DeleteConfirmation" xml:space="preserve">
+    <value>Delete Confirmation</value>
+  </data>
+  <data name="GridViewPictureSize" xml:space="preserve">
+    <value>Grid View Picture Size</value>
+  </data>
+  <data name="GridViewFilePathDisplay" xml:space="preserve">
+    <value>Grid View File Path Display</value>
+  </data>
+  <data name="RecycleBinSize" xml:space="preserve">
+    <value>Recycle Bin Size</value>
+  </data>
+  <data name="ScanTimerDebug" xml:space="preserve">
+    <value>Scan Timer (Debug)</value>
+  </data>
+  <data name="ApplyFileSizeLimits" xml:space="preserve">
+    <value>Apply File Size Limits</value>
+  </data>
+  <data name="ApplyDuplicateLimit" xml:space="preserve">
+    <value>Apply Duplicate Limit</value>
+  </data>
+  <data name="ApplyGridSize" xml:space="preserve">
+    <value>Apply Grid Size</value>
+  </data>
+  <data name="ApplySetting" xml:space="preserve">
+    <value>Apply Setting</value>
+  </data>
+  <data name="ApplyRecycleBinSize" xml:space="preserve">
+    <value>Apply Recycle Bin Size</value>
+  </data>
+  <data name="Browse" xml:space="preserve">
+    <value>Browse</value>
+  </data>
+  <data name="DuplicateFiles" xml:space="preserve">
+    <value>Duplicate Files</value>
+  </data>
+  <data name="SimilarImages" xml:space="preserve">
+    <value>Similar Images</value>
+  </data>
+  <data name="RecycleBin" xml:space="preserve">
+    <value>Recycle Bin</value>
+  </data>
+  <data name="Help" xml:space="preserve">
+    <value>Help</value>
+  </data>
+  <data name="ResetToDefaults" xml:space="preserve">
+    <value>Reset to Defaults</value>
+  </data>
+  <data name="FileNotFoundFormat" xml:space="preserve">
+    <value>File not found: {0}</value>
+  </data>
+  <data name="CouldNotOpenFileFormat" xml:space="preserve">
+    <value>Could not open file: {0}</value>
+  </data>
+  <data name="LogFileNotFound" xml:space="preserve">
+    <value>Log file not found.</value>
+  </data>
+  <data name="NothingToDelete" xml:space="preserve">
+    <value>No duplicates found in the selected folder.</value>
+  </data>
+  <data name="ConfirmDeleteIndividualFormat" xml:space="preserve">
+    <value>Delete '{0}'?</value>
+  </data>
+  <data name="InvalidInputNumber" xml:space="preserve">
+    <value>Please enter a valid number (0 or greater). 0 means no limit.</value>
+  </data>
+  <data name="RecycleBinSizeAppliedFormat" xml:space="preserve">
+    <value>Recycle bin size applied successfully: {0}</value>
+  </data>
+  <data name="ErrorSavingFormat" xml:space="preserve">
+    <value>Error saving {0}: {1}</value>
+  </data>
+  <data name="NoSelection" xml:space="preserve">
+    <value>No files selected.</value>
+  </data>
+  <data name="ConfirmDeleteMultipleFormat" xml:space="preserve">
+    <value>Delete {0} file(s)?</value>
+  </data>
+  <data name="InvalidMinSize" xml:space="preserve">
+    <value>Please enter a valid minimum file size (0 or greater).</value>
+  </data>
+  <data name="InvalidMaxSize" xml:space="preserve">
+    <value>Please enter a valid maximum file size (0 or greater).</value>
+  </data>
+  <data name="MinGreaterThanMax" xml:space="preserve">
+    <value>Minimum file size cannot be greater than maximum file size.</value>
+  </data>
+  <data name="FileSizeLimitsAppliedFormat" xml:space="preserve">
+    <value>File size limits applied successfully.\n\nMinimum: {0}\nMaximum: {1}</value>
+  </data>
+  <data name="DuplicateLimitAppliedFormat" xml:space="preserve">
+    <value>Duplicate limit applied successfully: {0}</value>
+  </data>
+  <data name="GridSizeAppliedRefreshFormat" xml:space="preserve">
+    <value>Grid picture size set to {0}px. Refreshing grid view...</value>
+  </data>
+  <data name="GridSizeAppliedSwitchFormat" xml:space="preserve">
+    <value>Grid picture size set to {0}px. The new size will be applied when you switch to grid view.</value>
+  </data>
+  <!-- Additional strings could be added here -->
+</root>

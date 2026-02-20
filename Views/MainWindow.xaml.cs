@@ -30,14 +30,14 @@ namespace DupFree.Views
         private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int attrValue, int attrSize);
 
         private const int DWMWA_USE_IMMERSIVE_DARK_MODE = 20;
-        private DuplicateSearchService _searchService;
-        private List<string> _selectedDirectories;
-        private List<DuplicateGroupViewModel> _groupViewModels;
+        private readonly DuplicateSearchService _searchService;
+        private readonly List<string> _selectedDirectories;
+        private readonly List<DuplicateGroupViewModel> _groupViewModels;
         private string _currentViewMode = "list";
-        private string _currentSortBy = "Name";
+        private readonly string _currentSortBy = "Name";
         private string _searchText = string.Empty;
-        private List<FileItemViewModel> _currentGridFiles = new();
-        private readonly Dictionary<int, FrameworkElement> _realizedGridItems = new();
+        private readonly List<FileItemViewModel> _currentGridFiles = [];
+        private readonly Dictionary<int, FrameworkElement> _realizedGridItems = [];
         private bool _isVirtualGridActive = false;
         private double _virtualItemWidth = 156;
         private double _virtualItemHeight = 196;
@@ -47,10 +47,10 @@ namespace DupFree.Views
         private bool _hasScannedOnce = false;
         private int _selectedGridIndex = -1;
         private int _gridColumns = 0;
-        private System.Threading.CancellationTokenSource _scanCancellation;
+        private System.Threading.CancellationTokenSource? _scanCancellation;
         private const int FILES_PER_BATCH = 500;  // Render 500 files at a time
-        private readonly SemaphoreSlim _thumbnailSemaphore = new SemaphoreSlim(4);
-        private readonly HashSet<string> _thumbnailLoading = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private readonly SemaphoreSlim _thumbnailSemaphore = new(4);
+        private readonly HashSet<string> _thumbnailLoading = new(StringComparer.OrdinalIgnoreCase);
         // Limit concurrent video hover previews to avoid heavy CPU/memory usage
         private int _activeVideoPreviews = 0;
         private const int MaxConcurrentVideoPreviews = 2;
@@ -58,17 +58,26 @@ namespace DupFree.Views
         private int _activeGifAnimations = 0;
         private const int MaxConcurrentGifAnimations = 6;
         private bool _isScanning = false;  // Track if a scan is currently in progress
-        
+
         // Recycle Bin functionality
-        private readonly ObservableCollection<DeletedFileItem> _recycleBin = new ObservableCollection<DeletedFileItem>();
-        private readonly List<DeletedFileItem> _selectedRecycleBinItems = new List<DeletedFileItem>();
-        private readonly List<FileItemViewModel> _selectedGridItems = new List<FileItemViewModel>(); // For scanned files grid selection
-        private FileItemViewModel _lastSelectedGridItem = null; // For Shift+Click range selection
+        private readonly ObservableCollection<DeletedFileItem> _recycleBin = [];
+        private readonly List<DeletedFileItem> _selectedRecycleBinItems = [];
+        private readonly List<FileItemViewModel> _selectedGridItems = []; // For scanned files grid selection
+        private FileItemViewModel? _lastSelectedGridItem = null; // For Shift+Click range selection
         // MAX_RECYCLE_BIN_SIZE now driven by SettingsService.MaxRecycleBinSize
 
         public MainWindow()
         {
+#if DEBUG
+            // uncomment to test unexpected-error dialog
+            // throw new InvalidOperationException("simulated startup failure");
+#endif
             InitializeComponent();
+            // Hide the dependency checker in releases (it only works with the SDK/source)
+#if !DEBUG
+            if (CheckDependenciesButton != null)
+                CheckDependenciesButton.Visibility = Visibility.Collapsed;
+#endif
             // Set sidebar button to static light blue color
             SidebarCollapseButton.Background = new SolidColorBrush(Color.FromRgb(0x3B, 0x82, 0xF6)); // BlueBrush
 
@@ -89,8 +98,8 @@ namespace DupFree.Views
             _searchService = new DuplicateSearchService();
             // Ensure service events update UI on dispatcher thread
             _searchService.OnStatusChanged += (status) => Dispatcher.Invoke(() => StatusText.Text = status);
-            _selectedDirectories = new List<string>();
-            _groupViewModels = new List<DuplicateGroupViewModel>();
+            _selectedDirectories = [];
+            _groupViewModels = [];
             // Show large-icon grid by default (after collections are initialized)
             DisplayResults();
 
@@ -124,7 +133,7 @@ namespace DupFree.Views
             DeleteSelectedButton_Click(sender, e);
         }
 
-        private System.Windows.Threading.DispatcherTimer _resizeTimer;
+        private System.Windows.Threading.DispatcherTimer? _resizeTimer;
 
         private void MainWindow_SizeChanged(object sender, SizeChangedEventArgs e)
         {
@@ -138,11 +147,11 @@ namespace DupFree.Views
                 _resizeTimer.Tick += (s, args) =>
                 {
                     _resizeTimer.Stop();
-                    
+
                     // Don't refresh during scan to prevent duplication
                     if (_isScanning)
                         return;
-                    
+
                     // Refresh grid layout if in grid view mode
                     if (_currentViewMode != "list" && ResultsScrollViewer.Visibility == Visibility.Visible && _currentGridFiles.Count > 0)
                     {
@@ -150,7 +159,7 @@ namespace DupFree.Views
                     }
                 };
             }
-            
+
             _resizeTimer.Stop();
             _resizeTimer.Start();
         }
@@ -177,7 +186,7 @@ namespace DupFree.Views
             // Don't refresh during an active scan to prevent duplication
             if (_isScanning)
                 return;
-                
+
             foreach (var g in _groupViewModels)
             {
                 foreach (var f in g.Files)
@@ -242,30 +251,157 @@ namespace DupFree.Views
                 }
                 else
                 {
-                    MessageBox.Show($"File not found: {file.FilePath}", "Error", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    MessageBox.Show(string.Format(Properties.Resources.FileNotFoundFormat, file.FilePath), "Error", MessageBoxButton.OK, MessageBoxImage.Warning);
                 }
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Could not open file: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show(string.Format(Properties.Resources.CouldNotOpenFileFormat, ex.Message), "Error", MessageBoxButton.OK, MessageBoxImage.Error);
             }
+        }
+
+        /// <summary>
+        /// Handler for the "Open Log File" button added to the Help/About panel. Selects the current
+        /// log file in Explorer so users can easily attach or copy it.
+        /// </summary>
+        private void OpenLogButton_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var path = Services.Log.FilePath;
+                if (!string.IsNullOrEmpty(path) && File.Exists(path))
+                {
+                    // open explorer with the file selected
+                    Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{path}\"") { UseShellExecute = true });
+                }
+                else
+                {
+                    MessageBox.Show(Properties.Resources.LogFileNotFound, "DupFree", MessageBoxButton.OK, MessageBoxImage.Information);
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex);
+            }
+        }
+
+        // Open GitHub issue page in browser with a minimal template and log path.
+        private void ReportIssueButton_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                const string repo = "multimccp00/DupFree";
+                const string issueTitle = "Bug report";
+
+                string bodyText = "";
+                try
+                {
+                    if (!string.IsNullOrEmpty(Log.FilePath) && File.Exists(Log.FilePath))
+                    {
+                        var logContent = File.ReadAllText(Log.FilePath);
+                        // truncate if excessively large
+                        if (logContent.Length > 10000)
+                            logContent = logContent[^10000..]; // last 10k chars
+                        bodyText = "Log snippet:" + Environment.NewLine +
+                                   "```" + Environment.NewLine +
+                                   logContent + Environment.NewLine +
+                                   "```";
+                    }
+                    else
+                    {
+                        bodyText = "Log file not available.";
+                    }
+                }
+                catch
+                {
+                    bodyText = "(failed to read log)";
+                }
+                var body = Uri.EscapeDataString(bodyText);
+                var titleEscaped = Uri.EscapeDataString(issueTitle);
+                var url = $"https://github.com/{repo}/issues/new?title={titleEscaped}&body={body}";
+                Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex);
+            }
+        }
+
+        // show window with output from `dotnet list package --outdated`
+        private async void CheckDependenciesButton_Click(object sender, RoutedEventArgs e)
+        {
+            bool available = false;
+            try
+            {
+                var psi = new ProcessStartInfo("dotnet", "--version")
+                {
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+                using var p = Process.Start(psi);
+                if (p != null)
+                {
+                    await p.WaitForExitAsync();
+                    available = p.ExitCode == 0;
+                }
+            }
+            catch { }
+
+            if (!available)
+            {
+                MessageBox.Show(this, "The .NET CLI (dotnet) was not found in PATH. Cannot check dependencies.",
+                    "Dependency Check", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            string result;
+            try
+            {
+                result = await Task.Run(() => RunDotnetListOutdated());
+            }
+            catch (Exception ex)
+            {
+                result = "Failed to execute command: " + ex;
+            }
+
+            var wnd = new DependencyWindow(result) { Owner = this };
+            wnd.ShowDialog();
+        }
+
+        private static string RunDotnetListOutdated()
+        {
+            var psi = new ProcessStartInfo("dotnet", "list package --outdated")
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WorkingDirectory = AppDomain.CurrentDomain.BaseDirectory
+            };
+            using var p = Process.Start(psi);
+            if (p == null) throw new InvalidOperationException("Unable to start dotnet process.");
+            var output = p.StandardOutput.ReadToEnd();
+            output += "\n" + p.StandardError.ReadToEnd();
+            p.WaitForExit();
+            return output;
         }
 
         private void UpdateSelectedCount()
         {
-            int selectedCount = 0;
-            
-            if (RecycleBinPanel.Visibility == Visibility.Visible && RecycleBinDataGrid != null)
+            int selectedCount;
+            if (RecycleBinPanel != null && RecycleBinPanel.Visibility == Visibility.Visible && RecycleBinDataGrid != null)
             {
                 selectedCount = RecycleBinDataGrid.SelectedItems.Count;
                 DeleteSelectedButton.Content = $"Recover Selected ({selectedCount})";
             }
-            else if (ResultsDataGrid.Visibility == Visibility.Visible)
+            else if (ResultsDataGrid != null && ResultsDataGrid.Visibility == Visibility.Visible)
             {
                 selectedCount = ResultsDataGrid.SelectedItems.Count;
                 DeleteSelectedButton.Content = $"Delete Selected ({selectedCount})";
             }
-            else if (ResultsListView.Visibility == Visibility.Visible)
+            else if (ResultsListView != null && ResultsListView.Visibility == Visibility.Visible)
             {
                 selectedCount = ResultsListView.SelectedItems.Count;
                 DeleteSelectedButton.Content = $"Delete Selected ({selectedCount})";
@@ -281,14 +417,13 @@ namespace DupFree.Views
         {
             if (string.IsNullOrWhiteSpace(_searchText))
             {
-                return files.ToList();
+                return [.. files];
             }
 
             var query = _searchText.Trim();
-            return files.Where(f =>
+            return [.. files.Where(f =>
                     (!string.IsNullOrEmpty(f.FileName) && f.FileName.Contains(query, StringComparison.OrdinalIgnoreCase)) ||
-                    (!string.IsNullOrEmpty(f.FilePath) && f.FilePath.Contains(query, StringComparison.OrdinalIgnoreCase)))
-                .ToList();
+                    (!string.IsNullOrEmpty(f.FilePath) && f.FilePath.Contains(query, StringComparison.OrdinalIgnoreCase)))];
         }
 
         private void ApplyTheme(string theme)
@@ -318,12 +453,12 @@ namespace DupFree.Views
                 appResources["MutedForeground"] = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromArgb(255, 156, 163, 175));
                 appResources["OrangeBrush"] = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromArgb(255, 245, 158, 11));
             }
-            
+
             // Force refresh ComboBox styles
             LimitComboBox.Foreground = (System.Windows.Media.Brush)appResources["ControlForeground"];
             SortComboBox.Foreground = (System.Windows.Media.Brush)appResources["ControlForeground"];
             UnitComboBox.Foreground = (System.Windows.Media.Brush)appResources["ControlForeground"];
-            
+
             // Update Scan button style separately
             ScanButton.Background = appResources["ScanButtonBrush"] as System.Windows.Media.Brush;
         }
@@ -340,17 +475,34 @@ namespace DupFree.Views
             var dialog = new VistaFolderBrowserDialog();
             if (dialog.ShowDialog() == true)
             {
+                string path = dialog.SelectedPath;
+                if (!DirectoryAccessAllowed(path))
+                {
+                    // styled warning using Ookii.TaskDialog so it matches the rest of the UI
+                    var td = new Ookii.Dialogs.Wpf.TaskDialog
+                    {
+                        WindowTitle = "Permission Denied",
+                        MainInstruction = "Cannot access the selected folder.",
+                        Content = "Please check your permissions and try a different location.",
+                        MainIcon = Ookii.Dialogs.Wpf.TaskDialogIcon.Warning
+                    };
+                    td.ShowDialog(this);
+
+                    BrowseButton.IsChecked = false;
+                    return false;
+                }
+
                 _selectedDirectories.Clear();
-                _selectedDirectories.Add(dialog.SelectedPath);
+                _selectedDirectories.Add(path);
                 ScanButton.IsEnabled = true;
-                StatusText.Text = $"Selected: {dialog.SelectedPath}";
-                
+                StatusText.Text = $"Selected: {path}";
+
                 // Pass directories to similar images panel
                 SimilarImagesPanelControl.SetDirectories(_selectedDirectories);
 
                 // Update storage display for the selected drive
                 UpdateStorageIndicator();
-                
+
                 // Uncheck the browse button after selection
                 BrowseButton.IsChecked = false;
 
@@ -370,6 +522,25 @@ namespace DupFree.Views
                 return false;
             }
         }
+
+        private bool DirectoryAccessAllowed(string path)
+        {
+            try
+            {
+                // attempt to enumerate a single entry
+                var entries = Directory.EnumerateFileSystemEntries(path).FirstOrDefault();
+                return true;
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return false;
+            }
+            catch
+            {
+                // ignore other errors and assume accessible
+                return true;
+            }
+        }
         [System.Runtime.Versioning.SupportedOSPlatform("windows")]
         private async void ScanButton_Click(object sender, RoutedEventArgs e)
         {
@@ -377,14 +548,14 @@ namespace DupFree.Views
             if (_selectedDirectories == null || _selectedDirectories.Count == 0)
             {
                 BrowseButton_Click(sender, e);
-                
+
                 // Check again after browse
                 if (_selectedDirectories == null || _selectedDirectories.Count == 0)
                 {
                     return; // User cancelled browse
                 }
             }
-            
+
             ScanButton.IsEnabled = false;
             _isScanning = true;  // Mark scan as in progress
             CancelButton.Visibility = Visibility.Visible;
@@ -392,17 +563,17 @@ namespace DupFree.Views
             ScanProgressIndicator.Width = 0;
             ProgressPanel.Visibility = Visibility.Visible;
             ViewControlPanel.Visibility = Visibility.Collapsed;
-            
+
             // Comprehensively clear all UI display elements
             ResultsPanel.Children.Clear();
             _realizedGridItems.Clear();  // Clear virtualized grid cache
-            ResultsDataGrid.ItemsSource = null; // Clear data grid source
-            ResultsListView.ItemsSource = null; // Clear list view source
+            if (ResultsDataGrid != null) ResultsDataGrid.ItemsSource = null; // Clear data grid source
+            if (ResultsListView != null) ResultsListView.ItemsSource = null; // Clear list view source
             NoResultsPlaceholder.Visibility = Visibility.Collapsed;  // Hide placeholder
-            ResultsDataGrid.Visibility = Visibility.Collapsed;
-            ResultsListView.Visibility = Visibility.Collapsed;
+            if (ResultsDataGrid != null) ResultsDataGrid.Visibility = Visibility.Collapsed;
+            if (ResultsListView != null) ResultsListView.Visibility = Visibility.Collapsed;
             ResultsScrollViewer.Visibility = Visibility.Collapsed;
-            
+
             // Clear data collections
             _groupViewModels.Clear(); // Clear previous scan results before starting new scan
             _currentGridFiles.Clear(); // Clear grid files as well
@@ -439,9 +610,9 @@ namespace DupFree.Views
             var duplicates = await _searchService.FindDuplicatesAsync(_selectedDirectories, progress, limit, _scanCancellation.Token);
 
             _totalFilesScanned = _searchService.TotalFilesScanned;
-            
-            System.Diagnostics.Debug.WriteLine($"Scan complete: Found {duplicates.Count} groups from search service");
-            
+
+            Log.Info($"Scan complete: Found {duplicates.Count} groups from search service");
+
             // After scan, always load in list mode - no thumbnails needed
             foreach (var dupGroup in duplicates)
             {
@@ -458,25 +629,25 @@ namespace DupFree.Views
 
                 _groupViewModels.Add(groupVM);
             }
-            
-            System.Diagnostics.Debug.WriteLine($"After adding to _groupViewModels: {_groupViewModels.Count} groups");
+
+            Log.Info($"After adding to _groupViewModels: {_groupViewModels.Count} groups");
 
             ApplySorting();
-            
+
             // Count total files
             int totalFiles = 0;
             foreach (var group in _groupViewModels)
                 totalFiles += group.Files.Count;
-            
-            System.Diagnostics.Debug.WriteLine($"Total files in all groups: {totalFiles}");
-            
+
+            Log.Info($"Total files in all groups: {totalFiles}");
+
             // Clear grid selections after scan
             _selectedGridItems.Clear();
             UpdateDeleteCount();
-            
+
             // Keep current view mode - don't reset to list
             DisplayResults();
-            
+
             _isScanning = false;  // Mark scan as complete
             ScanButton.IsEnabled = true;
             CancelButton.Visibility = Visibility.Collapsed;
@@ -537,10 +708,10 @@ namespace DupFree.Views
         {
             if (FooterFilesChecked == null || FooterDuplicates == null || FooterSpaceWasted == null || FooterSpaceSaved == null)
                 return;
-            
+
             int totalDuplicateFiles = 0;
             long wastedSpace = 0;
-            
+
             foreach (var group in _groupViewModels)
             {
                 if (group.Files.Count == 0)
@@ -554,7 +725,7 @@ namespace DupFree.Views
                 var fileSize = group.Files[0].FileSize;
                 wastedSpace += (group.Files.Count - 1) * fileSize;
             }
-            
+
             FooterFilesChecked.Text = _totalFilesScanned.ToString();
             FooterDuplicates.Text = totalDuplicateFiles.ToString();
             FooterSpaceWasted.Text = FormatFileSize(wastedSpace);
@@ -564,17 +735,17 @@ namespace DupFree.Views
         private void UpdateStorageIndicator()
         {
             if (_selectedDirectories.Count == 0 || StorageIndicator == null || StorageText == null || StorageDriveText == null) return;
-            
+
             try
             {
                 var driveInfo = new System.IO.DriveInfo(_selectedDirectories[0]);
                 long used = driveInfo.TotalSize - driveInfo.AvailableFreeSpace;
                 double percentage = (double)used / driveInfo.TotalSize * 100;
-                
+
                 // Update storage indicator width (max 200 to match Grid width)
                 double indicatorWidth = (percentage / 100) * 200;
                 StorageIndicator.Width = indicatorWidth;
-                
+
                 // Change color based on percentage
                 System.Windows.Media.Brush indicatorColor;
                 if (percentage < 75)
@@ -583,9 +754,9 @@ namespace DupFree.Views
                     indicatorColor = (System.Windows.Media.Brush)Application.Current.Resources["OrangeBrush"];
                 else
                     indicatorColor = (System.Windows.Media.Brush)Application.Current.Resources["DangerBrush"];
-                
+
                 StorageIndicator.Background = indicatorColor;
-                
+
                 // Update storage text
                 var driveRoot = driveInfo.Name.TrimEnd('\\');
                 var volumeLabel = driveInfo.VolumeLabel;
@@ -599,20 +770,20 @@ namespace DupFree.Views
 
         private string FormatFileSize(long bytes)
         {
-            string[] sizes = { "B", "KB", "MB", "GB", "TB" };
+            string[] sizes = ["B", "KB", "MB", "GB", "TB"];
             double len = bytes;
             int order = 0;
             while (len >= 1024 && order < sizes.Length - 1)
             {
                 order++;
-                len = len / 1024;
+                len /= 1024;
             }
             return $"{len:0.##} {sizes[order]}";
         }
 
         private void DisplayResults()
         {
-            System.Diagnostics.Debug.WriteLine("DisplayResults: Entered method");
+            Log.Info("DisplayResults: Entered method");
 
             // Count total files first
             int totalFiles = 0;
@@ -620,12 +791,12 @@ namespace DupFree.Views
             {
                 totalFiles += group.Files.Count;
             }
-            System.Diagnostics.Debug.WriteLine($"DisplayResults: Total files: {totalFiles}");
+            Log.Info($"DisplayResults: Total files: {totalFiles}");
 
             // Show/hide placeholder based on whether we have results
             if (totalFiles == 0)
             {
-                System.Diagnostics.Debug.WriteLine("DisplayResults: No results found, showing placeholder");
+                Log.Info("DisplayResults: No results found, showing placeholder");
                 NoResultsPlaceholder.Visibility = Visibility.Visible;
                 ResultsDataGrid.Visibility = Visibility.Collapsed;
                 ResultsListView.Visibility = Visibility.Collapsed;
@@ -640,11 +811,11 @@ namespace DupFree.Views
                 NoResultsPlaceholder.Visibility = Visibility.Collapsed;
             }
 
-            System.Diagnostics.Debug.WriteLine($"DisplayResults: Current view mode: {_currentViewMode}");
+            Log.Info($"DisplayResults: Current view mode: {_currentViewMode}");
 
             if (_currentViewMode == "list")
             {
-                System.Diagnostics.Debug.WriteLine("DisplayResults: Rendering list view");
+                Log.Info("DisplayResults: Rendering list view");
                 _isVirtualGridActive = false;
                 ResultsScrollViewer.ScrollChanged -= ResultsScrollViewer_ScrollChanged;
                 ResultsScrollViewer.SizeChanged -= ResultsScrollViewer_SizeChanged;
@@ -659,7 +830,7 @@ namespace DupFree.Views
                 {
                     var dupCount = group.Files?.Count ?? 0;
                     var dupSpace = group.TotalWastedSpaceFormatted;
-                    foreach (var f in group.Files)
+                    foreach (var f in group.Files ?? Enumerable.Empty<FileItemViewModel>())
                     {
                         // Skip duplicates based on file path
                         if (!seenPathsListView.Add(f.FilePath))
@@ -671,16 +842,16 @@ namespace DupFree.Views
                     }
                 }
 
-                System.Diagnostics.Debug.WriteLine($"DisplayResults: Flat list contains {flat.Count} items");
+                Log.Info($"DisplayResults: Flat list contains {flat.Count} items");
 
                 // Apply duplicate limit from settings
                 if (SettingsService.MaxDuplicatesToShow > 0 && flat.Count > SettingsService.MaxDuplicatesToShow)
                 {
-                    flat = flat.Take(SettingsService.MaxDuplicatesToShow).ToList();
+                    flat = [.. flat.Take(SettingsService.MaxDuplicatesToShow)];
                 }
 
                 var filtered = FilterFiles(flat);
-                System.Diagnostics.Debug.WriteLine($"DisplayResults: Filtered list contains {filtered.Count} items");
+                Log.Info($"DisplayResults: Filtered list contains {filtered.Count} items");
 
                 // Use DataGrid for proper column binding
                 ResultsDataGrid.ItemsSource = filtered;
@@ -692,7 +863,7 @@ namespace DupFree.Views
             }
             else if (_currentViewMode == "grid")
             {
-                System.Diagnostics.Debug.WriteLine("DisplayResults: Rendering grid view");
+                Log.Info("DisplayResults: Rendering grid view");
                 ResultsListView.Visibility = Visibility.Collapsed;
                 ResultsDataGrid.Visibility = Visibility.Collapsed;
                 ResultsScrollViewer.Visibility = Visibility.Visible;
@@ -706,16 +877,16 @@ namespace DupFree.Views
                     allGridFiles.AddRange(group.Files);
                 }
 
-                System.Diagnostics.Debug.WriteLine($"DisplayResults: Total groups: {_groupViewModels.Count}, Total flattened files: {allGridFiles.Count}");
+                Log.Info($"DisplayResults: Total groups: {_groupViewModels.Count}, Total flattened files: {allGridFiles.Count}");
 
                 // Apply duplicate limit from settings
                 if (SettingsService.MaxDuplicatesToShow > 0 && allGridFiles.Count > SettingsService.MaxDuplicatesToShow)
                 {
-                    allGridFiles = allGridFiles.Take(SettingsService.MaxDuplicatesToShow).ToList();
+                    allGridFiles = [.. allGridFiles.Take(SettingsService.MaxDuplicatesToShow)];
                 }
 
                 var filteredFiles = FilterFiles(allGridFiles);
-                System.Diagnostics.Debug.WriteLine($"DisplayResults: After filtering: {filteredFiles.Count} files");
+                Log.Info($"DisplayResults: After filtering: {filteredFiles.Count} files");
 
                 // Deduplicate based on file path (in case of duplicate entries)
                 var uniqueFiles = new List<FileItemViewModel>();
@@ -729,13 +900,13 @@ namespace DupFree.Views
                 }
 
                 _currentGridFiles.AddRange(uniqueFiles);
-                System.Diagnostics.Debug.WriteLine($"DisplayResults: After dedup: {uniqueFiles.Count} files, now _currentGridFiles contains {_currentGridFiles.Count} files");
+                Log.Info($"DisplayResults: After dedup: {uniqueFiles.Count} files, now _currentGridFiles contains {_currentGridFiles.Count} files");
                 UpdateSelectedCount();
 
                 // For smaller sets, render with WrapPanel to avoid virtualization gaps
                 if (_currentGridFiles.Count <= 1000)
                 {
-                    System.Diagnostics.Debug.WriteLine("DisplayResults: Using WrapPanel for rendering");
+                    Log.Info("DisplayResults: Using WrapPanel for rendering");
                     _isVirtualGridActive = false;
                     ResultsScrollViewer.ScrollChanged -= ResultsScrollViewer_ScrollChanged;
                     ResultsScrollViewer.SizeChanged -= ResultsScrollViewer_SizeChanged;
@@ -758,13 +929,13 @@ namespace DupFree.Views
                     ResultsScrollViewer.SizeChanged += ResultsScrollViewer_SizeChanged;
 
                     // Local helper to populate the WrapPanel (kept before LayoutUpdated usage)
-                    Action addChildren = () =>
+                    void addChildren()
                     {
                         // guard against double-add
                         if (wrap.Children.Count > 0 && wrap.Children.OfType<FrameworkElement>().Any(c => c.Tag is FileItemViewModel))
                             return;
 
-                        System.Diagnostics.Debug.WriteLine($"DisplayResults: About to add {_currentGridFiles.Count} items to WrapPanel");
+                        Log.Info($"DisplayResults: About to add {_currentGridFiles.Count} items to WrapPanel");
                         int addedCount = 0;
                         foreach (var file in _currentGridFiles)
                         {
@@ -776,10 +947,10 @@ namespace DupFree.Views
                             }
                             else
                             {
-                                System.Diagnostics.Debug.WriteLine($"DisplayResults: Failed to create element for file: {file.FilePath}");
+                                Log.Info($"DisplayResults: Failed to create element for file: {file.FilePath}");
                             }
                         }
-                        System.Diagnostics.Debug.WriteLine($"DisplayResults: Successfully added {addedCount} items to WrapPanel");
+                        Log.Info($"DisplayResults: Successfully added {addedCount} items to WrapPanel");
 
                         // Force layout recalculation to fix overlapping/gaps after scan or view switch
                         wrap.InvalidateMeasure();
@@ -791,15 +962,14 @@ namespace DupFree.Views
                         wrap.UpdateLayout();
                         ResultsPanel.UpdateLayout();
                         ResultsScrollViewer.UpdateLayout();
-                    };
+                    }
 
                     // One-time LayoutUpdated handler — run after WPF finishes the next layout pass
                     // and only populate the WrapPanel when we have a stable measured width. This avoids
                     // race conditions where children are added before the WrapPanel/ScrollViewer measure
                     // is valid (causes stacking/empty-space glitches).
                     bool childrenAdded = false;
-                    EventHandler layoutUpdatedHandler = null;
-                    layoutUpdatedHandler = (s, ev) =>
+                    void layoutUpdatedHandler(object? s, EventArgs ev)
                     {
                         try
                         {
@@ -825,7 +995,8 @@ namespace DupFree.Views
                         {
                             ResultsScrollViewer.LayoutUpdated -= layoutUpdatedHandler;
                         }
-                    };
+                    }
+
                     ResultsScrollViewer.LayoutUpdated += layoutUpdatedHandler;
 
                     // Fallback timer: if LayoutUpdated doesn't run with a valid width within 250ms,
@@ -839,7 +1010,7 @@ namespace DupFree.Views
                             addChildren();
                             childrenAdded = true;
                         }
-                        timer.Stop();
+                        timer?.Stop();
                         ResultsScrollViewer.LayoutUpdated -= layoutUpdatedHandler;
                     }, Dispatcher);
                     fallbackTimer.Start();
@@ -862,7 +1033,7 @@ namespace DupFree.Views
                 }
                 else
                 {
-                    System.Diagnostics.Debug.WriteLine("DisplayResults: Using virtualized grid for rendering");
+                    Log.Info("DisplayResults: Using virtualized grid for rendering");
                     ResultsPanel.Children.Clear();
 
                     // Create canvas for virtualized rendering
@@ -1050,8 +1221,8 @@ namespace DupFree.Views
                 Canvas.SetTop(child, newRow * _virtualItemHeight);
             }
 
-            System.Diagnostics.Debug.WriteLine($"UpdateVirtualGrid: repositioned {_realizedGridItems.Count} realized items (cols={_virtualColumns}, itemW={_virtualItemWidth}, itemH={_virtualItemHeight})");
-                    Console.WriteLine($"UpdateVirtualGrid: repositioned {_realizedGridItems.Count} realized items (cols={_virtualColumns}, itemW={_virtualItemWidth}, itemH={_virtualItemHeight})");
+            Log.Info($"UpdateVirtualGrid: repositioned {_realizedGridItems.Count} realized items (cols={_virtualColumns}, itemW={_virtualItemWidth}, itemH={_virtualItemHeight})");
+            Log.Info($"UpdateVirtualGrid: repositioned {_realizedGridItems.Count} realized items (cols={_virtualColumns}, itemW={_virtualItemWidth}, itemH={_virtualItemHeight})");
 
             // Detect any accidental overlapping positions among realized children (debugging aid)
             try
@@ -1066,7 +1237,7 @@ namespace DupFree.Views
                     var key = (left, top);
                     if (!posMap.TryGetValue(key, out var list))
                     {
-                        list = new List<int>();
+                        list = [];
                         posMap[key] = list;
                     }
                     list.Add(idx);
@@ -1078,15 +1249,15 @@ namespace DupFree.Views
                     hadCollision = true;
                     var indices = kv.Value;
                     var files = indices.Select(i => (i < _currentGridFiles.Count ? _currentGridFiles[i].FileName : "<out-of-range>")).ToList();
-                    System.Diagnostics.Debug.WriteLine($"UpdateVirtualGrid: COLLISION at ({kv.Key.left},{kv.Key.top}) -> idx=[{string.Join(',', indices)}], files=[{string.Join(',', files)}]");
-                    Console.WriteLine($"UpdateVirtualGrid: COLLISION at ({kv.Key.left},{kv.Key.top}) -> idx=[{string.Join(',', indices)}], files=[{string.Join(',', files)}]");
+                    Log.Info($"UpdateVirtualGrid: COLLISION at ({kv.Key.left},{kv.Key.top}) -> idx=[{string.Join(',', indices)}], files=[{string.Join(',', files)}]");
+                    Log.Info($"UpdateVirtualGrid: COLLISION at ({kv.Key.left},{kv.Key.top}) -> idx=[{string.Join(',', indices)}], files=[{string.Join(',', files)}]");
                 }
 
                 // Automatic recovery if collision detected — rebuild the visible canvas region
                 if (hadCollision)
                 {
-                    System.Diagnostics.Debug.WriteLine("UpdateVirtualGrid: collision detected — rebuilding visible canvas range to recover");
-                    Console.WriteLine("UpdateVirtualGrid: collision detected — rebuilding visible canvas range to recover");
+                    Log.Info("UpdateVirtualGrid: collision detected — rebuilding visible canvas range to recover");
+                    Log.Info("UpdateVirtualGrid: collision detected — rebuilding visible canvas range to recover");
 
                     foreach (var kv in _realizedGridItems.ToList())
                     {
@@ -1146,7 +1317,7 @@ namespace DupFree.Views
             int panelWidth = pictureSize + 24;
             // Adjust height based on whether file path will be shown
             int panelHeight = pictureSize + (SettingsService.ShowGridFilePath ? 72 : 52);
-            
+
             var panel = new StackPanel
             {
                 Width = panelWidth,
@@ -1258,23 +1429,30 @@ namespace DupFree.Views
                     e.Handled = true;
                     return;
                 }
-                
+
                 var clickedBorder = s as Border;
-                var clickedFile = clickedBorder.Tag as FileItemViewModel;
-                
+                var clickedFile = clickedBorder?.Tag as FileItemViewModel;
+
+                // Guard: tag may be unexpectedly null or of the wrong type
+                if (clickedFile == null)
+                    return;
+
                 bool isCtrlPressed = (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control;
                 bool isShiftPressed = (Keyboard.Modifiers & ModifierKeys.Shift) == ModifierKeys.Shift;
-                
-                if (isShiftPressed && _lastSelectedGridItem != null)
+
+                // Capture field into a local so the nullable state is tracked by the compiler
+                var lastSelected = _lastSelectedGridItem;
+
+                if (isShiftPressed && lastSelected != null)
                 {
-                    int lastIndex = _currentGridFiles.IndexOf(_lastSelectedGridItem);
+                    int lastIndex = _currentGridFiles.IndexOf(lastSelected);
                     int currentIndex = _currentGridFiles.IndexOf(clickedFile);
-                    
+
                     if (lastIndex >= 0 && currentIndex >= 0)
                     {
                         int start = Math.Min(lastIndex, currentIndex);
                         int end = Math.Max(lastIndex, currentIndex);
-                        
+
                         for (int i = start; i <= end; i++)
                         {
                             if (!_selectedGridItems.Contains(_currentGridFiles[i]))
@@ -1282,7 +1460,7 @@ namespace DupFree.Views
                                 _selectedGridItems.Add(_currentGridFiles[i]);
                             }
                         }
-                        
+
                         RefreshGridItemSelection();
                     }
                 }
@@ -1296,17 +1474,17 @@ namespace DupFree.Views
                     {
                         _selectedGridItems.Add(clickedFile);
                     }
-                    
+
                     RefreshGridItemSelection();
                 }
                 else
                 {
                     _selectedGridItems.Clear();
                     _selectedGridItems.Add(clickedFile);
-                    
+
                     RefreshGridItemSelection();
                 }
-                
+
                 _lastSelectedGridItem = clickedFile;
                 UpdateDeleteCount();
                 e.Handled = true;
@@ -1420,23 +1598,28 @@ namespace DupFree.Views
                     e.Handled = true;
                     return;
                 }
-                
+
                 var clickedBorder = s as Border;
-                var clickedFile = clickedBorder.Tag as FileItemViewModel;
-                
+                var clickedFile = clickedBorder?.Tag as FileItemViewModel;
+
+                if (clickedFile == null)
+                    return;
+
                 bool isCtrlPressed = (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control;
                 bool isShiftPressed = (Keyboard.Modifiers & ModifierKeys.Shift) == ModifierKeys.Shift;
-                
-                if (isShiftPressed && _lastSelectedGridItem != null)
+
+                var lastSelected = _lastSelectedGridItem;
+
+                if (isShiftPressed && lastSelected != null)
                 {
-                    int lastIndex = _currentGridFiles.IndexOf(_lastSelectedGridItem);
+                    int lastIndex = _currentGridFiles.IndexOf(lastSelected);
                     int currentIndex = _currentGridFiles.IndexOf(clickedFile);
-                    
+
                     if (lastIndex >= 0 && currentIndex >= 0)
                     {
                         int start = Math.Min(lastIndex, currentIndex);
                         int end = Math.Max(lastIndex, currentIndex);
-                        
+
                         for (int i = start; i <= end; i++)
                         {
                             if (!_selectedGridItems.Contains(_currentGridFiles[i]))
@@ -1444,7 +1627,7 @@ namespace DupFree.Views
                                 _selectedGridItems.Add(_currentGridFiles[i]);
                             }
                         }
-                        
+
                         RefreshGridItemSelection();
                     }
                 }
@@ -1458,17 +1641,17 @@ namespace DupFree.Views
                     {
                         _selectedGridItems.Add(clickedFile);
                     }
-                    
+
                     RefreshGridItemSelection();
                 }
                 else
                 {
                     _selectedGridItems.Clear();
                     _selectedGridItems.Add(clickedFile);
-                    
+
                     RefreshGridItemSelection();
                 }
-                
+
                 _lastSelectedGridItem = clickedFile;
                 UpdateDeleteCount();
                 e.Handled = true;
@@ -1546,14 +1729,14 @@ namespace DupFree.Views
             // hasn't been prepared yet, decode it on-demand in a background task.
             var ext = Path.GetExtension(file.FilePath).ToLower();
             bool isAnimatedFile = ext == ".gif" || (ext == ".webp" && Services.ImagePreviewService.IsAnimatedWebP(file.FilePath));
-            CancellationTokenSource gifAnimCts = null;
+            CancellationTokenSource? gifAnimCts = null;
             if (isAnimatedFile)
             {
                 grid.MouseEnter += async (_, __) =>
                 {
                     try
                     {
-                        Console.WriteLine($"MouseEnter(animated) -> {file.FilePath}; animated present={file.AnimatedThumbnail != null}");
+                        Log.Info($"MouseEnter(animated) -> {file.FilePath}; animated present={file.AnimatedThumbnail != null}");
 
                         if (ext == ".gif")
                         {
@@ -1562,7 +1745,7 @@ namespace DupFree.Views
                             {
                                 if (_activeGifAnimations >= MaxConcurrentGifAnimations)
                                 {
-                                    Console.WriteLine($"Skipping manual GIF animation for {file.FilePath} (limit reached)");
+                                    Log.Info($"Skipping manual GIF animation for {file.FilePath} (limit reached)");
                                 }
                                 else
                                 {
@@ -1573,7 +1756,7 @@ namespace DupFree.Views
                                         try
                                         {
                                             var frames = file.AnimatedFrames;
-                                            var delays = file.AnimatedFrameDelays ?? Enumerable.Repeat(80, frames.Length).ToArray();
+                                            var delays = file.AnimatedFrameDelays ?? [.. Enumerable.Repeat(80, frames.Length)];
                                             int fi = 0;
                                             Dispatcher.Invoke(() => image.Source = frames[0]);
                                             while (!gifAnimCts.Token.IsCancellationRequested)
@@ -1583,7 +1766,7 @@ namespace DupFree.Views
                                                 Dispatcher.Invoke(() => image.Source = frames[fi]);
                                             }
                                         }
-                                        catch (Exception ex) { Console.WriteLine($"Cached GIF animator error for {file.FilePath}: {ex}"); }
+                                        catch (Exception ex) { Log.Error(ex); }
                                         finally
                                         {
                                             _activeGifAnimations = Math.Max(0, _activeGifAnimations - 1);
@@ -1618,13 +1801,13 @@ namespace DupFree.Views
                                     file.AnimatedThumbnail = animatedBm;
                                     image.Source = null; // force swap/reload
                                     image.Source = file.AnimatedThumbnail;
-                                    Console.WriteLine($"Applied animated thumbnail for {file.FilePath} (from bytes)");
+                                    Log.Info($"Applied animated thumbnail for {file.FilePath} (from bytes)");
                                 });
                                 return;
                             }
                             catch (Exception ex)
                             {
-                                Console.WriteLine($"Animated bytes -> BitmapImage failed: {ex}");
+                                Log.Error(ex);
                             }
                         }
 
@@ -1649,21 +1832,21 @@ namespace DupFree.Views
                                 await Task.Yield();
                                 image.Source = uriBm;
 
-                                Console.WriteLine($"Fallback: Uri-based GIF animation applied for {file.FilePath}");
+                                Log.Info($"Fallback: Uri-based GIF animation applied for {file.FilePath}");
                                 return;
                             }
                             catch (Exception ex)
                             {
-                                Console.WriteLine($"Fallback Uri GIF failed: {ex}");
+                                Log.Error(ex);
                             }
                         }
 
-                        Console.WriteLine($"No animated preview available for {file.FilePath} — attempting manual frame animation fallback");
+                        Log.Info($"No animated preview available for {file.FilePath} — attempting manual frame animation fallback");
 
                         // Manual frame animation fallback (Magick -> frame PNGs -> dispatcher timer loop).
                         if (_activeGifAnimations >= MaxConcurrentGifAnimations)
                         {
-                            Console.WriteLine($"Skipping manual GIF animation for {file.FilePath} (concurrency limit reached)");
+                            Log.Info($"Skipping manual GIF animation for {file.FilePath} (concurrency limit reached)");
                         }
                         else
                         {
@@ -1671,12 +1854,12 @@ namespace DupFree.Views
                             gifAnimCts = new CancellationTokenSource();
                             try
                             {
-                                var framesInfo = await Task.Run(() => Services.ImagePreviewService.GetAnimatedFrames(file.FilePath, (int)size, (int)size));
-                                var frames = framesInfo.Frames;
-                                var delays = framesInfo.Delays;
+                                var (Frames, Delays) = await Task.Run(() => Services.ImagePreviewService.GetAnimatedFrames(file.FilePath, (int)size, (int)size));
+                                var frames = Frames;
+                                var delays = Delays;
                                 if (frames != null && frames.Length > 0)
                                 {
-                                    Console.WriteLine($"Manual GIF animator: frames={frames.Length} for {file.FilePath}");
+                                    Log.Info($"Manual GIF animator: frames={frames.Length} for {file.FilePath}");
                                     int fi = 0;
                                     Dispatcher.Invoke(() => image.Source = frames[0]);
                                     while (!gifAnimCts.Token.IsCancellationRequested)
@@ -1690,7 +1873,7 @@ namespace DupFree.Views
                             }
                             catch (Exception ex)
                             {
-                                Console.WriteLine($"Manual GIF animator failed for {file.FilePath}: {ex}");
+                                Log.Error(ex);
                             }
                             finally
                             {
@@ -1702,7 +1885,7 @@ namespace DupFree.Views
                     }
                     catch (Exception ex)
                     {
-                        Console.WriteLine($"Exception in animated MouseEnter for {file.FilePath}: {ex}");
+                        Log.Error(ex);
                     }
                 };
 
@@ -1717,7 +1900,7 @@ namespace DupFree.Views
                             try { file.AnimatedThumbnail = null; } catch { }
                         }
                         image.Source = file.Thumbnail;
-                        Console.WriteLine($"MouseLeave(animated) -> {file.FilePath}");
+                        Log.Info($"MouseLeave(animated) -> {file.FilePath}");
                     }
                     catch { }
                 };
@@ -1726,8 +1909,8 @@ namespace DupFree.Views
             grid.Children.Add(image);
 
             // --- Video hover preview (lightweight) ---
-            MediaElement media = null;
-            CancellationTokenSource hoverCts = null;
+            MediaElement? media = null;
+            CancellationTokenSource? hoverCts = null;
 
             if (Services.ImagePreviewService.IsVideoFile(file.FilePath))
             {
@@ -1747,10 +1930,10 @@ namespace DupFree.Views
                 grid.Children.Add(media);
 
                 // Media events for diagnostics and UI fallback
-                media.MediaOpened += (_, __) => Console.WriteLine($"MediaOpened: {file.FilePath} naturalDuration={media.NaturalDuration}");
+                media.MediaOpened += (_, __) => Log.Info($"MediaOpened: {file.FilePath} naturalDuration={media.NaturalDuration}");
                 media.MediaFailed += (_, e) =>
                 {
-                    Console.WriteLine($"MediaFailed: {file.FilePath} - {e.ErrorException?.Message ?? e.ErrorException?.ToString()}");
+                    Log.Error($"MediaFailed: {file.FilePath} - {e.ErrorException?.Message ?? e.ErrorException?.ToString()}");
                     try
                     {
                         // hide media control, clear source and show a visible error marker so user knows preview failed
@@ -1773,12 +1956,12 @@ namespace DupFree.Views
 
                 grid.MouseEnter += async (_, __) =>
                 {
-                    Console.WriteLine($"MouseEnter(video) -> {file.FilePath}; active={_activeVideoPreviews}");
+                    Log.Info($"MouseEnter(video) -> {file.FilePath}; active={_activeVideoPreviews}");
 
                     // throttle concurrent previews
                     if (_activeVideoPreviews >= MaxConcurrentVideoPreviews)
                     {
-                        Console.WriteLine("Skipping video preview (limit reached)");
+                        Log.Info("Skipping video preview (limit reached)");
                         return;
                     }
 
@@ -1791,7 +1974,7 @@ namespace DupFree.Views
                         if (media.Source == null)
                         {
                             media.Source = new Uri(file.FilePath, UriKind.Absolute);
-                            Console.WriteLine($"Media.Source assigned for {file.FilePath}");
+                            Log.Info($"Media.Source assigned for {file.FilePath}");
                         }
 
                         media.Visibility = Visibility.Visible;
@@ -1799,11 +1982,11 @@ namespace DupFree.Views
                         try
                         {
                             media.Play();
-                            Console.WriteLine($"Media.Play invoked for {file.FilePath}");
+                            Log.Info($"Media.Play invoked for {file.FilePath}");
                         }
                         catch (Exception ex)
                         {
-                            Console.WriteLine($"Media.Play failed for {file.FilePath}: {ex}");
+                            Log.Error(ex);
                         }
 
                         // play a short preview (2.5s) or until mouse leaves
@@ -1811,15 +1994,15 @@ namespace DupFree.Views
                     }
                     catch (TaskCanceledException)
                     {
-                        Console.WriteLine($"Video preview cancelled for {file.FilePath}");
+                        Log.Info($"Video preview cancelled for {file.FilePath}");
                     }
                     catch (Exception ex)
                     {
-                        Console.WriteLine($"Video preview error for {file.FilePath}: {ex}");
+                        Log.Error(ex);
                     }
                     finally
                     {
-                        try { media.Pause(); media.Visibility = Visibility.Collapsed; Console.WriteLine($"Media stopped for {file.FilePath}"); } catch { }
+                        try { media.Pause(); media.Visibility = Visibility.Collapsed; Log.Info($"Media stopped for {file.FilePath}"); } catch { }
                         _activeVideoPreviews = Math.Max(0, _activeVideoPreviews - 1);
                     }
                 };
@@ -1913,12 +2096,12 @@ namespace DupFree.Views
                 // and also prepare an unfrozen animated BitmapImage for hover-play.
                 if (ext == ".gif" || (ext == ".webp" && Services.ImagePreviewService.IsAnimatedWebP(file.FilePath)))
                 {
-                    Console.WriteLine($"EnsureThumbnailAsync START (animated): {file.FilePath}");
+                    Log.Info($"EnsureThumbnailAsync START (animated): {file.FilePath}");
                     var animatedBytes = await Task.Run(() => Services.ImagePreviewService.GetAnimatedImageBytes(file.FilePath, size, size));
                     var firstFrame = await Task.Run(() => Services.ImagePreviewService.GetFirstFrameBitmap(file.FilePath, size, size));
                     // also try extracting manual frames (cached) for reliable GIF animation
-                    var framesInfo = await Task.Run(() => Services.ImagePreviewService.GetAnimatedFrames(file.FilePath, size, size));
-                    Console.WriteLine($"EnsureThumbnailAsync: {file.FilePath} animatedBytes={(animatedBytes != null ? animatedBytes.Length.ToString() : "null")}, firstFrame={(firstFrame != null ? "ok" : "null")}, frames={(framesInfo.Frames != null ? framesInfo.Frames.Length.ToString() : "0")} ");
+                    var (Frames, Delays) = await Task.Run(() => Services.ImagePreviewService.GetAnimatedFrames(file.FilePath, size, size));
+                    Log.Info($"EnsureThumbnailAsync: {file.FilePath} animatedBytes={(animatedBytes != null ? animatedBytes.Length.ToString() : "null")}, firstFrame={(firstFrame != null ? "ok" : "null")}, frames={(Frames != null ? Frames.Length.ToString() : "0")} ");
 
                     if (animatedBytes == null && firstFrame == null)
                         return;
@@ -1930,10 +2113,10 @@ namespace DupFree.Views
                         {
                             file.Thumbnail = firstFrame;
                         }
-                        else if (framesInfo.Frames != null && framesInfo.Frames.Length > 0)
+                        else if (Frames != null && Frames.Length > 0)
                         {
                             // prefer the first extracted frame as the static thumbnail
-                            file.Thumbnail = framesInfo.Frames[0] as BitmapImage ?? Services.ImagePreviewService.CreateBitmapImageFromBytes(Services.ImagePreviewService.GetAnimatedImageBytes(file.FilePath, size, size), size, freeze: true);
+                            file.Thumbnail = Frames[0] as BitmapImage ?? Services.ImagePreviewService.CreateBitmapImageFromBytes(Services.ImagePreviewService.GetAnimatedImageBytes(file.FilePath, size, size), size, freeze: true);
                         }
                         else if (animatedBytes != null)
                         {
@@ -1941,15 +2124,15 @@ namespace DupFree.Views
                         }
 
                         // Cache manual frames (preferred for hover animation)
-                        if (framesInfo.Frames != null && framesInfo.Frames.Length > 0)
+                        if (Frames != null && Frames.Length > 0)
                         {
-                            file.AnimatedFrames = framesInfo.Frames;
-                            file.AnimatedFrameDelays = framesInfo.Delays;
-                            Console.WriteLine($"EnsureThumbnailAsync: Cached {file.AnimatedFrames.Length} frames for {file.FilePath}");
+                            file.AnimatedFrames = Frames;
+                            file.AnimatedFrameDelays = Delays;
+                            Log.Info($"EnsureThumbnailAsync: Cached {file.AnimatedFrames.Length} frames for {file.FilePath}");
                         }
 
                         // Keep AnimatedThumbnail only as a fallback; do NOT rely on it for GIF animation if manual frames exist.
-                        if ((framesInfo.Frames == null || framesInfo.Frames.Length == 0) && animatedBytes != null)
+                        if ((Frames == null || Frames.Length == 0) && animatedBytes != null)
                         {
                             if (ext == ".gif")
                             {
@@ -1963,19 +2146,19 @@ namespace DupFree.Views
                                     uriBm.DecodePixelWidth = size;
                                     uriBm.EndInit();
                                     file.AnimatedThumbnail = uriBm;
-                                    Console.WriteLine($"EnsureThumbnailAsync: URI AnimatedThumbnail assigned for GIF {file.FilePath}");
+                                    Log.Info($"EnsureThumbnailAsync: URI AnimatedThumbnail assigned for GIF {file.FilePath}");
                                 }
                                 catch (Exception ex)
                                 {
-                                    Console.WriteLine($"EnsureThumbnailAsync: URI GIF fallback failed for {file.FilePath}: {ex}");
+                                    Log.Error(ex);
                                     file.AnimatedThumbnail = Services.ImagePreviewService.CreateBitmapImageFromBytes(animatedBytes, size, freeze: false);
-                                    Console.WriteLine($"EnsureThumbnailAsync: bytes-based AnimatedThumbnail assigned for {file.FilePath}");
+                                    Log.Info($"EnsureThumbnailAsync: bytes-based AnimatedThumbnail assigned for {file.FilePath}");
                                 }
                             }
                             else
                             {
                                 file.AnimatedThumbnail = Services.ImagePreviewService.CreateBitmapImageFromBytes(animatedBytes, size, freeze: false);
-                                Console.WriteLine($"EnsureThumbnailAsync: AnimatedThumbnail assigned for {file.FilePath}");
+                                Log.Info($"EnsureThumbnailAsync: AnimatedThumbnail assigned for {file.FilePath}");
                             }
                         }
 
@@ -2089,7 +2272,7 @@ namespace DupFree.Views
 
         private async Task DeleteAllDuplicatesInFolderAsync(FileItemViewModel clickedFile)
         {
-            string folder = Path.GetDirectoryName(clickedFile.FilePath);
+            string? folder = Path.GetDirectoryName(clickedFile.FilePath);
             if (string.IsNullOrEmpty(folder)) return;
 
             // Collect all duplicate files in the same folder (excluding originals — keep one per group)
@@ -2128,14 +2311,14 @@ namespace DupFree.Views
             // After collecting files across all groups, validate selection and prepare deletion
             if (filesToDelete.Count == 0)
             {
-                MessageBox.Show("No duplicates found in the selected folder.", "Nothing to delete", MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBox.Show(Properties.Resources.NothingToDelete, "Nothing to delete", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
 
             // Prepare thumbnail capture, paths and progress variables
             int gridSize = SettingsService.GridPictureSize;
-            var filesToCapture = SettingsService.MaxRecycleBinSize > 0 ? filesToDelete.Take(SettingsService.MaxRecycleBinSize).ToList() : filesToDelete.ToList();
-            var thumbData = new List<(FileItemViewModel file, BitmapImage thumb)>();
+            var filesToCapture = SettingsService.MaxRecycleBinSize > 0 ? filesToDelete.Take(SettingsService.MaxRecycleBinSize).ToList() : [.. filesToDelete];
+            var thumbData = new List<(FileItemViewModel file, BitmapImage? thumb)>();
             var pathsToDelete = filesToDelete.Select(f => f.FilePath).ToList();
             int deleted = 0;
             int failed = 0;
@@ -2158,96 +2341,96 @@ namespace DupFree.Views
 
             if (_currentGridFiles.Count <= 1000)
             {
-                    _isVirtualGridActive = false;
-                    ResultsScrollViewer.ScrollChanged -= ResultsScrollViewer_ScrollChanged;
-                    ResultsScrollViewer.SizeChanged -= ResultsScrollViewer_SizeChanged;
+                _isVirtualGridActive = false;
+                ResultsScrollViewer.ScrollChanged -= ResultsScrollViewer_ScrollChanged;
+                ResultsScrollViewer.SizeChanged -= ResultsScrollViewer_SizeChanged;
 
-                    ResultsPanel.Children.Clear();
+                ResultsPanel.Children.Clear();
 
-                    var wrap = new WrapPanel
+                var wrap = new WrapPanel
+                {
+                    Orientation = Orientation.Horizontal,
+                    HorizontalAlignment = HorizontalAlignment.Stretch
+                };
+
+                // Try to constrain wrap width immediately (may be 0 on first layout).
+                AdjustWrapPanelWidth(wrap);
+                ResultsPanel.Children.Add(wrap);
+
+                // Re-subscribe SizeChanged so the WrapPanel is updated when the ScrollViewer
+                // finally reports a valid ViewportWidth (prevents first-time overlap).
+                ResultsScrollViewer.SizeChanged -= ResultsScrollViewer_SizeChanged;
+                ResultsScrollViewer.SizeChanged += ResultsScrollViewer_SizeChanged;
+
+                // One-time LayoutUpdated handler — runs after WPF finishes the next layout
+                // pass and guarantees the WrapPanel will be measured with a valid width.
+                void layoutUpdatedHandler2(object? s, EventArgs ev)
+                {
+                    try
                     {
-                        Orientation = Orientation.Horizontal,
-                        HorizontalAlignment = HorizontalAlignment.Stretch
-                    };
+                        double wrapWidth = ResultsScrollViewer.ViewportWidth;
+                        if (double.IsNaN(wrapWidth) || wrapWidth <= 0)
+                            wrapWidth = ResultsScrollViewer.ActualWidth;
 
-                    // Try to constrain wrap width immediately (may be 0 on first layout).
-                    AdjustWrapPanelWidth(wrap);
-                    ResultsPanel.Children.Add(wrap);
-
-                    // Re-subscribe SizeChanged so the WrapPanel is updated when the ScrollViewer
-                    // finally reports a valid ViewportWidth (prevents first-time overlap).
-                    ResultsScrollViewer.SizeChanged -= ResultsScrollViewer_SizeChanged;
-                    ResultsScrollViewer.SizeChanged += ResultsScrollViewer_SizeChanged;
-
-                    // One-time LayoutUpdated handler — runs after WPF finishes the next layout
-                    // pass and guarantees the WrapPanel will be measured with a valid width.
-                    EventHandler layoutUpdatedHandler2 = null;
-                    layoutUpdatedHandler2 = (s, ev) =>
-                    {
-                        try
+                        if (!double.IsNaN(wrapWidth) && wrapWidth > 0)
                         {
-                            double wrapWidth = ResultsScrollViewer.ViewportWidth;
-                            if (double.IsNaN(wrapWidth) || wrapWidth <= 0)
-                                wrapWidth = ResultsScrollViewer.ActualWidth;
-
-                            if (!double.IsNaN(wrapWidth) && wrapWidth > 0)
-                            {
-                                AdjustWrapPanelWidth(wrap);
-                                wrap.InvalidateMeasure();
-                                wrap.UpdateLayout();
-                                ResultsScrollViewer.LayoutUpdated -= layoutUpdatedHandler2;
-                            }
-                        }
-                        catch
-                        {
+                            AdjustWrapPanelWidth(wrap);
+                            wrap.InvalidateMeasure();
+                            wrap.UpdateLayout();
                             ResultsScrollViewer.LayoutUpdated -= layoutUpdatedHandler2;
                         }
-                    };
-                    ResultsScrollViewer.LayoutUpdated += layoutUpdatedHandler2;
-
-                    // Add click handler to WrapPanel for deselecting when clicking empty space
-                    wrap.MouseLeftButtonDown += (s, e) =>
-                    {
-                        // Only deselect if clicking directly on the WrapPanel, not on a child
-                        if (s == e.OriginalSource)
-                        {
-                            _selectedGridItems.Clear();
-                            _lastSelectedGridItem = null;
-                            RefreshGridItemSelection();
-                            UpdateDeleteCount();
-                            e.Handled = true;
-                        }
-                    };
-
-                    System.Diagnostics.Debug.WriteLine($"DisplayResults: About to add {_currentGridFiles.Count} items to WrapPanel");
-                    int addedCount = 0;
-                    foreach (var file in _currentGridFiles)
-                    {
-                        wrap.Children.Add(GetViewModeCreateFunc()(file));
-                        addedCount++;
                     }
-                    System.Diagnostics.Debug.WriteLine($"DisplayResults: Successfully added {addedCount} items to WrapPanel");
-
-                    // Force layout recalculation to fix overlapping/gaps after scan or view switch
-                    wrap.InvalidateMeasure();
-                    wrap.InvalidateArrange();
-                    ResultsPanel.InvalidateMeasure();
-                    ResultsPanel.InvalidateArrange();
-                    ResultsScrollViewer.InvalidateMeasure();
-                    ResultsScrollViewer.InvalidateArrange();
-                    wrap.UpdateLayout();
-                    ResultsPanel.UpdateLayout();
-                    ResultsScrollViewer.UpdateLayout();
-
-                    StatusText.Text = $"Displaying {_currentGridFiles.Count} files (grid)";
+                    catch
+                    {
+                        ResultsScrollViewer.LayoutUpdated -= layoutUpdatedHandler2;
+                    }
                 }
-            
+
+                ResultsScrollViewer.LayoutUpdated += layoutUpdatedHandler2;
+
+                // Add click handler to WrapPanel for deselecting when clicking empty space
+                wrap.MouseLeftButtonDown += (s, e) =>
+                {
+                    // Only deselect if clicking directly on the WrapPanel, not on a child
+                    if (s == e.OriginalSource)
+                    {
+                        _selectedGridItems.Clear();
+                        _lastSelectedGridItem = null;
+                        RefreshGridItemSelection();
+                        UpdateDeleteCount();
+                        e.Handled = true;
+                    }
+                };
+
+                Log.Info($"DisplayResults: About to add {_currentGridFiles.Count} items to WrapPanel");
+                int addedCount = 0;
+                foreach (var file in _currentGridFiles)
+                {
+                    wrap.Children.Add(GetViewModeCreateFunc()(file));
+                    addedCount++;
+                }
+                Log.Info($"DisplayResults: Successfully added {addedCount} items to WrapPanel");
+
+                // Force layout recalculation to fix overlapping/gaps after scan or view switch
+                wrap.InvalidateMeasure();
+                wrap.InvalidateArrange();
+                ResultsPanel.InvalidateMeasure();
+                ResultsPanel.InvalidateArrange();
+                ResultsScrollViewer.InvalidateMeasure();
+                ResultsScrollViewer.InvalidateArrange();
+                wrap.UpdateLayout();
+                ResultsPanel.UpdateLayout();
+                ResultsScrollViewer.UpdateLayout();
+
+                StatusText.Text = $"Displaying {_currentGridFiles.Count} files (grid)";
+            }
+
             await Task.Run(() =>
             {
                 // Load thumbnails only for files that will fit in the recycle bin
                 foreach (var file in filesToCapture)
                 {
-                    BitmapImage thumb = file.Thumbnail;
+                    BitmapImage? thumb = file.Thumbnail;
                     if (thumb == null && File.Exists(file.FilePath) && Services.ImagePreviewService.IsPreviewableImage(file.FilePath))
                     {
                         try
@@ -2337,16 +2520,16 @@ namespace DupFree.Views
             {
                 if (!skipConfirm && Services.SettingsService.ConfirmDelete)
                 {
-                    var confirm = MessageBox.Show($"Delete '{file.FileName}'?", "Confirm delete", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+                    var confirm = MessageBox.Show(string.Format(Properties.Resources.ConfirmDeleteIndividualFormat, file.FileName), "Confirm delete", MessageBoxButton.YesNo, MessageBoxImage.Warning);
                     if (confirm != MessageBoxResult.Yes)
                         return;
                 }
 
                 StatusText.Text = $"Deleting {file.FileName}...";
-                
+
                 // Add to recycle bin before deleting
                 AddToRecycleBin(file);
-                
+
                 await Task.Run(() =>
                 {
                     try
@@ -2395,13 +2578,13 @@ namespace DupFree.Views
                 }
 
                 ApplySorting();
-                ResultsDataGrid.ItemsSource = null;
-                ResultsListView.ItemsSource = null;
+                if (ResultsDataGrid != null) ResultsDataGrid.ItemsSource = null;
+                if (ResultsListView != null) ResultsListView.ItemsSource = null;
                 DisplayResults();
                 UpdateFooterStats();
 
                 // For ListView, restore selection to next item (same index) or previous if at end
-                if (_currentViewMode == "list" && ResultsListView.Visibility == Visibility.Visible)
+                if (_currentViewMode == "list" && ResultsListView != null && ResultsListView.Visibility == Visibility.Visible)
                 {
                     _ = Dispatcher.BeginInvoke(() =>
                     {
@@ -2415,8 +2598,7 @@ namespace DupFree.Views
                             // Update layout to ensure item containers are generated
                             ResultsListView.UpdateLayout();
                             // Get the ListViewItem and focus it
-                            var item = ResultsListView.ItemContainerGenerator.ContainerFromIndex(sel) as ListViewItem;
-                            if (item != null)
+                            if (ResultsListView.ItemContainerGenerator.ContainerFromIndex(sel) is ListViewItem item)
                             {
                                 item.Focus();
                             }
@@ -2428,7 +2610,7 @@ namespace DupFree.Views
                     }, System.Windows.Threading.DispatcherPriority.Loaded);
                 }
                 // For DataGrid, restore selection to next item (same index) or previous if at end
-                else if (ResultsDataGrid.Visibility == Visibility.Visible)
+                else if (ResultsDataGrid != null && ResultsDataGrid.Visibility == Visibility.Visible)
                 {
                     _ = Dispatcher.BeginInvoke(() =>
                     {
@@ -2442,8 +2624,7 @@ namespace DupFree.Views
                             // Update layout to ensure row containers are generated
                             ResultsDataGrid.UpdateLayout();
                             // Get the DataGridRow and focus it
-                            var row = ResultsDataGrid.ItemContainerGenerator.ContainerFromIndex(sel) as DataGridRow;
-                            if (row != null)
+                            if (ResultsDataGrid.ItemContainerGenerator.ContainerFromIndex(sel) is DataGridRow row)
                             {
                                 row.MoveFocus(new TraversalRequest(FocusNavigationDirection.Next));
                             }
@@ -2489,7 +2670,7 @@ namespace DupFree.Views
             }
         }
 
-        private static T FindAncestor<T>(DependencyObject current) where T : DependencyObject
+        private static T? FindAncestor<T>(DependencyObject current) where T : DependencyObject
         {
             while (current != null)
             {
@@ -2519,7 +2700,7 @@ namespace DupFree.Views
                 // Animate sliding indicator to left
                 AnimateViewToggle(0);
             }
-            
+
             // Check if we're in RecycleBin and display accordingly
             if (RecycleBinPanel.Visibility == Visibility.Visible)
             {
@@ -2529,7 +2710,7 @@ namespace DupFree.Views
             {
                 DisplayResults();
             }
-            
+
             UpdateDeleteCount();
         }
 
@@ -2546,12 +2727,11 @@ namespace DupFree.Views
                 };
                 transform.BeginAnimation(System.Windows.Media.TranslateTransform.XProperty, animation);
             }
-            
+
             // Update icon colors
             if (button.Template.FindName("Indicator", button) is Border indicator)
             {
-                var grid = indicator.Parent as Grid;
-                if (grid != null && grid.Children.Count > 1 && grid.Children[1] is Grid labelGrid)
+                if (indicator.Parent is Grid grid && grid.Children.Count > 1 && grid.Children[1] is Grid labelGrid)
                 {
                     if (labelGrid.Children[0] is Viewbox listBox && labelGrid.Children[1] is Viewbox gridBox)
                     {
@@ -2647,12 +2827,12 @@ namespace DupFree.Views
                     }
                 }
 
-                MessageBox.Show($"Recycle bin size applied successfully: {(maxSize == 0 ? "No limit" : maxSize.ToString())}",
+                MessageBox.Show(string.Format(Properties.Resources.RecycleBinSizeAppliedFormat, (maxSize == 0 ? "No limit" : maxSize.ToString())),
                     "Settings Saved", MessageBoxButton.OK, MessageBoxImage.Information);
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Error saving recycle bin size: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show(string.Format(Properties.Resources.ErrorSavingFormat, "recycle bin size", ex.Message), "Error", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 
@@ -2673,7 +2853,7 @@ namespace DupFree.Views
             bool showTopBars = (panel == ScanPanel || panel == RecycleBinPanel);
             TopFiltersBar.Visibility = showTopBars ? Visibility.Visible : Visibility.Collapsed;
             ActionBar.Visibility = showTopBars ? Visibility.Visible : Visibility.Collapsed;
-            
+
             // Hide footer stats when not viewing ScanPanel
             FooterStats.Visibility = panel == ScanPanel ? Visibility.Visible : Visibility.Collapsed;
 
@@ -2725,13 +2905,13 @@ namespace DupFree.Views
                 // Expand sidebar
                 widthAnimation.To = 256;
                 SidebarContainer.BeginAnimation(FrameworkElement.WidthProperty, widthAnimation);
-                
+
                 // Show content after a brief delay
                 Task.Delay(50).ContinueWith(_ => Dispatcher.Invoke(() =>
                 {
                     SidebarContent.Visibility = Visibility.Visible;
                 }));
-                
+
                 SidebarCollapseButton.ToolTip = "Collapse sidebar";
                 ((TextBlock)SidebarCollapseButton.Content).Text = "‹";
             }
@@ -2741,7 +2921,7 @@ namespace DupFree.Views
                 widthAnimation.To = 0;
                 SidebarContent.Visibility = Visibility.Collapsed;
                 SidebarContainer.BeginAnimation(FrameworkElement.WidthProperty, widthAnimation);
-                
+
                 SidebarCollapseButton.ToolTip = "Expand sidebar";
                 ((TextBlock)SidebarCollapseButton.Content).Text = "›";
             }
@@ -2759,7 +2939,7 @@ namespace DupFree.Views
 
         private void SelectAllButton_Click(object sender, RoutedEventArgs e)
         {
-            if (RecycleBinPanel.Visibility == Visibility.Visible && RecycleBinDataGrid != null)
+            if (RecycleBinPanel != null && RecycleBinPanel.Visibility == Visibility.Visible && RecycleBinDataGrid != null)
             {
                 // Toggle: if all selected, deselect all; otherwise select all
                 if (RecycleBinDataGrid.SelectedItems.Count == RecycleBinDataGrid.Items.Count)
@@ -2771,7 +2951,7 @@ namespace DupFree.Views
                     RecycleBinDataGrid.SelectAll();
                 }
             }
-            else if (ResultsDataGrid.Visibility == Visibility.Visible)
+            else if (ResultsDataGrid != null && ResultsDataGrid.Visibility == Visibility.Visible)
             {
                 // Toggle: if all selected, deselect all; otherwise select all
                 if (ResultsDataGrid.SelectedItems.Count == ResultsDataGrid.Items.Count)
@@ -2783,7 +2963,7 @@ namespace DupFree.Views
                     ResultsDataGrid.SelectAll();
                 }
             }
-            else if (ResultsListView.Visibility == Visibility.Visible)
+            else if (ResultsListView != null && ResultsListView.Visibility == Visibility.Visible)
             {
                 // Toggle: if all selected, deselect all; otherwise select all
                 if (ResultsListView.SelectedItems.Count == ResultsListView.Items.Count)
@@ -2801,7 +2981,7 @@ namespace DupFree.Views
         private async void DeleteSelectedButton_Click(object sender, RoutedEventArgs e)
         {
             // Check if we're in RecycleBinPanel
-            if (RecycleBinPanel.Visibility == Visibility.Visible)
+            if (RecycleBinPanel != null && RecycleBinPanel.Visibility == Visibility.Visible)
             {
                 RecoverSelectedFiles();
                 return;
@@ -2812,26 +2992,26 @@ namespace DupFree.Views
             // First check grid selections (for grid view in scanned files)
             if (_currentViewMode != "list" && _selectedGridItems.Count > 0)
             {
-                toDelete = _selectedGridItems.ToList();
+                toDelete = [.. _selectedGridItems];
             }
-            else if (ResultsDataGrid.Visibility == Visibility.Visible)
+            else if (ResultsDataGrid != null && ResultsDataGrid.Visibility == Visibility.Visible)
             {
-                toDelete = ResultsDataGrid.SelectedItems.Cast<FileItemViewModel>().ToList();
+                toDelete = [.. ResultsDataGrid.SelectedItems.Cast<FileItemViewModel>()];
             }
-            else if (ResultsListView.Visibility == Visibility.Visible)
+            else if (ResultsListView != null && ResultsListView.Visibility == Visibility.Visible)
             {
-                toDelete = ResultsListView.SelectedItems.Cast<FileItemViewModel>().ToList();
+                toDelete = [.. ResultsListView.SelectedItems.Cast<FileItemViewModel>()];
             }
 
             if (toDelete.Count == 0)
             {
-                MessageBox.Show("No files selected.", "No Selection", MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBox.Show(Properties.Resources.NoSelection, "No Selection", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
 
             if (Services.SettingsService.ConfirmDelete)
             {
-                var result = MessageBox.Show($"Delete {toDelete.Count} file(s)?", "Confirm delete", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+                var result = MessageBox.Show(string.Format(Properties.Resources.ConfirmDeleteMultipleFormat, toDelete.Count), "Confirm delete", MessageBoxButton.YesNo, MessageBoxImage.Warning);
                 if (result != MessageBoxResult.Yes)
                 {
                     return;
@@ -2909,7 +3089,7 @@ namespace DupFree.Views
         private void ResultsPanel_PreviewKeyDown(object sender, KeyEventArgs e)
         {
             // Handle keyboard navigation on grid view - use PreviewKeyDown to capture before bubbling
-            if (_currentGridFiles.Count == 0 || RecycleBinPanel.Visibility == Visibility.Visible) 
+            if (_currentGridFiles.Count == 0 || RecycleBinPanel.Visibility == Visibility.Visible)
                 return;
 
             if (e.Key == Key.Delete)
@@ -2918,11 +3098,11 @@ namespace DupFree.Views
                 List<FileItemViewModel> filesToDelete;
                 if (_selectedGridItems.Count > 0)
                 {
-                    filesToDelete = _selectedGridItems.ToList();
+                    filesToDelete = [.. _selectedGridItems];
                 }
                 else if (_selectedGridIndex >= 0 && _selectedGridIndex < _currentGridFiles.Count)
                 {
-                    filesToDelete = new List<FileItemViewModel> { _currentGridFiles[_selectedGridIndex] };
+                    filesToDelete = [_currentGridFiles[_selectedGridIndex]];
                 }
                 else
                 {
@@ -3096,41 +3276,43 @@ namespace DupFree.Views
             {
                 long minSize = 0;
                 long maxSize = 0;
-                
+
                 if (!string.IsNullOrWhiteSpace(MinFileSizeTextBox.Text))
                 {
                     if (!long.TryParse(MinFileSizeTextBox.Text, out minSize) || minSize < 0)
                     {
-                        MessageBox.Show("Please enter a valid minimum file size (0 or greater).", "Invalid Input", MessageBoxButton.OK, MessageBoxImage.Warning);
+                        MessageBox.Show(Properties.Resources.InvalidMinSize, "Invalid Input", MessageBoxButton.OK, MessageBoxImage.Warning);
                         return;
                     }
                 }
-                
+
                 if (!string.IsNullOrWhiteSpace(MaxFileSizeTextBox.Text))
                 {
                     if (!long.TryParse(MaxFileSizeTextBox.Text, out maxSize) || maxSize < 0)
                     {
-                        MessageBox.Show("Please enter a valid maximum file size (0 or greater).", "Invalid Input", MessageBoxButton.OK, MessageBoxImage.Warning);
+                        MessageBox.Show(Properties.Resources.InvalidMaxSize, "Invalid Input", MessageBoxButton.OK, MessageBoxImage.Warning);
                         return;
                     }
                 }
-                
+
                 if (maxSize > 0 && minSize > maxSize)
                 {
-                    MessageBox.Show("Minimum file size cannot be greater than maximum file size.", "Invalid Input", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    MessageBox.Show(Properties.Resources.MinGreaterThanMax, "Invalid Input", MessageBoxButton.OK, MessageBoxImage.Warning);
                     return;
                 }
-                
+
                 SettingsService.SetMinFileSizeMB(minSize);
                 SettingsService.SetMaxFileSizeMB(maxSize);
                 SettingsService.SaveToFile();
-                
-                MessageBox.Show($"File size limits applied successfully.\n\nMinimum: {(minSize == 0 ? "No limit" : minSize + " MB")}\nMaximum: {(maxSize == 0 ? "No limit" : maxSize + " MB")}", 
+
+                MessageBox.Show(string.Format(Properties.Resources.FileSizeLimitsAppliedFormat,
+                        (minSize == 0 ? "No limit" : minSize + " MB"),
+                        (maxSize == 0 ? "No limit" : maxSize + " MB")),
                     "Settings Saved", MessageBoxButton.OK, MessageBoxImage.Information);
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Error saving file size limits: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show(string.Format(Properties.Resources.ErrorSavingFormat, "file size limits", ex.Message), "Error", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 
@@ -3139,7 +3321,7 @@ namespace DupFree.Views
             try
             {
                 int maxDuplicates = 0;
-                
+
                 if (!string.IsNullOrWhiteSpace(MaxDuplicatesTextBox.Text))
                 {
                     if (!int.TryParse(MaxDuplicatesTextBox.Text, out maxDuplicates) || maxDuplicates < 0)
@@ -3148,16 +3330,17 @@ namespace DupFree.Views
                         return;
                     }
                 }
-                
+
                 SettingsService.SetMaxDuplicatesToShow(maxDuplicates);
                 SettingsService.SaveToFile();
-                
-                MessageBox.Show($"Duplicate limit applied successfully: {(maxDuplicates == 0 ? "No limit" : maxDuplicates.ToString())}", 
+
+                MessageBox.Show(string.Format(Properties.Resources.DuplicateLimitAppliedFormat,
+                        (maxDuplicates == 0 ? "No limit" : maxDuplicates.ToString())),
                     "Settings Saved", MessageBoxButton.OK, MessageBoxImage.Information);
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Error saving duplicate limit: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show(string.Format(Properties.Resources.ErrorSavingFormat, "duplicate limit", ex.Message), "Error", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 
@@ -3179,21 +3362,21 @@ namespace DupFree.Views
                 int size = (int)GridPictureSizeSlider.Value;
                 SettingsService.SetGridPictureSize(size);
                 SettingsService.SaveToFile();
-                
+
                 // Update the virtual grid dimensions
                 _virtualItemWidth = size + 56;  // size + panel padding + margins
                 _virtualItemHeight = size + 104; // size + panel padding + text height + margins
-                
+
                 // If currently in grid view, refresh the display
                 if (_currentViewMode != "list" && _groupViewModels != null && _groupViewModels.Count > 0)
                 {
-                    MessageBox.Show($"Grid picture size set to {size}px. Refreshing grid view...", 
+                    MessageBox.Show(string.Format(Properties.Resources.GridSizeAppliedRefreshFormat, size),
                         "Settings Saved", MessageBoxButton.OK, MessageBoxImage.Information);
                     DisplayResults();
                 }
                 else
                 {
-                    MessageBox.Show($"Grid picture size set to {size}px. The new size will be applied when you switch to grid view.", 
+                    MessageBox.Show(string.Format(Properties.Resources.GridSizeAppliedSwitchFormat, size),
                         "Settings Saved", MessageBoxButton.OK, MessageBoxImage.Information);
                 }
             }
@@ -3259,11 +3442,26 @@ namespace DupFree.Views
             }
         }
 
+        private void ResetSettingsButton_Click(object sender, RoutedEventArgs e)
+        {
+            var result = MessageBox.Show(
+                "Are you sure you want to reset all settings to their default values?",
+                "Reset Settings",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question);
+            if (result != MessageBoxResult.Yes)
+                return;
+
+            SettingsService.ResetToDefaults();
+            LoadSettingsValues();
+            MessageBox.Show("Settings have been reset to defaults.", "Settings Reset", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+
         // Recycle Bin Methods
         private void AddToRecycleBin(FileItemViewModel file)
         {
             // Ensure thumbnail is loaded before file gets deleted
-            BitmapImage thumb = file.Thumbnail;
+            BitmapImage? thumb = file.Thumbnail;
             if (thumb == null && File.Exists(file.FilePath) && Services.ImagePreviewService.IsPreviewableImage(file.FilePath))
             {
                 try
@@ -3302,7 +3500,7 @@ namespace DupFree.Views
         private void UpdateRecycleBinDisplay()
         {
             RecycleBinDataGrid.ItemsSource = _recycleBin;
-            RecycleBinCountText.Text = $"({_recycleBin.Count} file{(_recycleBin.Count != 1 ? "s" : "")})";
+            if (RecycleBinCountText != null) RecycleBinCountText.Text = $"({_recycleBin.Count} file{(_recycleBin.Count != 1 ? "s" : "")})";
             UpdateRecycleBinCount();
         }
 
@@ -3312,15 +3510,15 @@ namespace DupFree.Views
             _selectedRecycleBinItems.Clear();
             RecycleBinDataGrid?.UnselectAll();
             UpdateRecycleBinCount();
-            
+
             // Update count text
-            RecycleBinCountText.Text = $"({_recycleBin.Count} file{(_recycleBin.Count != 1 ? "s" : "")})";
-            
+            if (RecycleBinCountText != null) RecycleBinCountText.Text = $"({_recycleBin.Count} file{(_recycleBin.Count != 1 ? "s" : "")})";
+
             // Show/hide placeholder and action bar based on whether bin is empty
             if (_recycleBin.Count == 0)
             {
                 NoRecycleBinPlaceholder.Visibility = Visibility.Visible;
-                RecycleBinDataGrid.Visibility = Visibility.Collapsed;
+                if (RecycleBinDataGrid != null) RecycleBinDataGrid.Visibility = Visibility.Collapsed;
                 RecycleBinScrollViewer.Visibility = Visibility.Collapsed;
                 ActionBar.Visibility = Visibility.Collapsed;
                 return;
@@ -3330,20 +3528,20 @@ namespace DupFree.Views
                 NoRecycleBinPlaceholder.Visibility = Visibility.Collapsed;
                 ActionBar.Visibility = Visibility.Visible;
             }
-            
+
             if (_currentViewMode == "list")
             {
                 // Show list view
-                RecycleBinDataGrid.Visibility = Visibility.Visible;
-                RecycleBinScrollViewer.Visibility = Visibility.Collapsed;
-                RecycleBinDataGrid.ItemsSource = _recycleBin;
+                if (RecycleBinDataGrid != null) RecycleBinDataGrid.Visibility = Visibility.Visible;
+                if (RecycleBinScrollViewer != null) RecycleBinScrollViewer.Visibility = Visibility.Collapsed;
+                if (RecycleBinDataGrid != null) RecycleBinDataGrid.ItemsSource = _recycleBin;
             }
             else
             {
                 // Show grid view
-                RecycleBinDataGrid.Visibility = Visibility.Collapsed;
-                RecycleBinScrollViewer.Visibility = Visibility.Visible;
-                RecycleBinResultsPanel.Children.Clear();
+                if (RecycleBinDataGrid != null) RecycleBinDataGrid.Visibility = Visibility.Collapsed;
+                if (RecycleBinScrollViewer != null) RecycleBinScrollViewer.Visibility = Visibility.Visible;
+                if (RecycleBinResultsPanel != null) RecycleBinResultsPanel.Children.Clear();
 
                 var wrap = new WrapPanel
                 {
@@ -3352,27 +3550,29 @@ namespace DupFree.Views
                 };
 
                 // Try to constrain wrap width immediately (may be 0 on first layout).
-                double wrapWidth = RecycleBinScrollViewer.ViewportWidth;
+                double wrapWidth = RecycleBinScrollViewer?.ViewportWidth ?? 0;
                 if (double.IsNaN(wrapWidth) || wrapWidth <= 0)
-                    wrapWidth = RecycleBinScrollViewer.ActualWidth;
+                    wrapWidth = RecycleBinScrollViewer?.ActualWidth ?? 0;
                 if (!double.IsNaN(wrapWidth) && wrapWidth > 0)
                     wrap.Width = wrapWidth;
 
-                RecycleBinResultsPanel.Children.Add(wrap);
+                RecycleBinResultsPanel?.Children.Add(wrap);
 
                 // Ensure we update the WrapPanel when the RecycleBin ScrollViewer reports its size
-                RecycleBinScrollViewer.SizeChanged -= RecycleBinScrollViewer_SizeChanged;
-                RecycleBinScrollViewer.SizeChanged += RecycleBinScrollViewer_SizeChanged;
+                if (RecycleBinScrollViewer != null)
+                {
+                    RecycleBinScrollViewer.SizeChanged -= RecycleBinScrollViewer_SizeChanged;
+                    RecycleBinScrollViewer.SizeChanged += RecycleBinScrollViewer_SizeChanged;
+                }
 
                 // One-time LayoutUpdated handler for the recycle-bin WrapPanel so it reflows
-                EventHandler recycleLayoutHandler = null;
-                recycleLayoutHandler = (s, ev) =>
+                void recycleLayoutHandler(object? s, EventArgs ev)
                 {
                     try
                     {
-                        double w = RecycleBinScrollViewer.ViewportWidth;
+                        double w = RecycleBinScrollViewer?.ViewportWidth ?? 0;
                         if (double.IsNaN(w) || w <= 0)
-                            w = RecycleBinScrollViewer.ActualWidth;
+                            w = RecycleBinScrollViewer?.ActualWidth ?? 0;
                         if (!double.IsNaN(w) && w > 0)
                         {
                             wrap.Width = w;
@@ -3380,15 +3580,16 @@ namespace DupFree.Views
                             wrap.MaxWidth = w;
                             wrap.InvalidateMeasure();
                             wrap.UpdateLayout();
-                            RecycleBinScrollViewer.LayoutUpdated -= recycleLayoutHandler;
+                            if (RecycleBinScrollViewer != null) RecycleBinScrollViewer.LayoutUpdated -= recycleLayoutHandler;
                         }
                     }
                     catch
                     {
-                        RecycleBinScrollViewer.LayoutUpdated -= recycleLayoutHandler;
+                        if (RecycleBinScrollViewer != null) RecycleBinScrollViewer.LayoutUpdated -= recycleLayoutHandler;
                     }
-                };
-                RecycleBinScrollViewer.LayoutUpdated += recycleLayoutHandler;
+                }
+
+                if (RecycleBinScrollViewer != null) RecycleBinScrollViewer.LayoutUpdated += recycleLayoutHandler;
 
                 // Create grid items for each deleted file
                 foreach (var deletedFile in _recycleBin)
@@ -3402,7 +3603,7 @@ namespace DupFree.Views
         private Border CreateRecycleBinGridItem(DeletedFileItem deletedFile)
         {
             int gridSize = SettingsService.GridPictureSize;
-            
+
             var border = new Border
             {
                 Background = (System.Windows.Media.Brush)Application.Current.Resources["CardBackground"],
@@ -3420,24 +3621,28 @@ namespace DupFree.Views
             border.MouseLeftButtonDown += (s, e) =>
             {
                 var clickedBorder = s as Border;
-                var file = clickedBorder.Tag as DeletedFileItem;
-                
+                var file = clickedBorder?.Tag as DeletedFileItem;
+
+                // Guard: tag might not be a DeletedFileItem
+                if (file == null)
+                    return;
+
                 bool isCtrlPressed = (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control;
-                
+
                 if (isCtrlPressed)
                 {
                     // Ctrl+Click for multi-select: toggle this item
                     if (_selectedRecycleBinItems.Contains(file))
                     {
                         _selectedRecycleBinItems.Remove(file);
-                        clickedBorder.BorderBrush = (System.Windows.Media.Brush)Application.Current.Resources["BorderBrush"];
-                        clickedBorder.BorderThickness = new Thickness(1);
+                        clickedBorder!.BorderBrush = (System.Windows.Media.Brush)Application.Current.Resources["BorderBrush"];
+                        clickedBorder!.BorderThickness = new Thickness(1);
                     }
                     else
                     {
                         _selectedRecycleBinItems.Add(file);
-                        clickedBorder.BorderBrush = (System.Windows.Media.Brush)Application.Current.Resources["AccentBrush"];
-                        clickedBorder.BorderThickness = new Thickness(3);
+                        clickedBorder!.BorderBrush = (System.Windows.Media.Brush)Application.Current.Resources["AccentBrush"];
+                        clickedBorder!.BorderThickness = new Thickness(3);
                     }
                 }
                 else
@@ -3445,7 +3650,7 @@ namespace DupFree.Views
                     // Single click: select only this item
                     _selectedRecycleBinItems.Clear();
                     _selectedRecycleBinItems.Add(file);
-                    
+
                     // Update visual feedback for all items
                     if (s is Border border2 && border2.Parent is WrapPanel wrap)
                     {
@@ -3464,7 +3669,7 @@ namespace DupFree.Views
                         }
                     }
                 }
-                
+
                 // Update the count display
                 UpdateRecycleBinCount();
             };
@@ -3551,28 +3756,27 @@ namespace DupFree.Views
 
         private void UpdateDeleteCount()
         {
-            int count = 0;
-            
             if (RecycleBinPanel?.Visibility == Visibility.Visible)
             {
                 // In RecycleBin - don't update scan file counts
                 return;
             }
-            
+
+            int count;
             // Count from grid view if active
             if (_currentViewMode != "list")
             {
                 count = _selectedGridItems?.Count ?? 0;
-                System.Diagnostics.Debug.WriteLine($"UpdateDeleteCount - Grid view, selected items: {count}");
+                Log.Info($"UpdateDeleteCount - Grid view, selected items: {count}");
             }
             else
             {
                 // In list view, use ResultsDataGrid (not ResultsListView)
                 count = ResultsDataGrid?.SelectedItems.Count ?? 0;
-                System.Diagnostics.Debug.WriteLine($"UpdateDeleteCount - List view (DataGrid), selected items: {count}");
+                Log.Info($"UpdateDeleteCount - List view (DataGrid), selected items: {count}");
             }
-            
-            System.Diagnostics.Debug.WriteLine($"UpdateDeleteCount - Final count: {count}");
+
+            Log.Info($"UpdateDeleteCount - Final count: {count}");
             DeleteSelectedButton.Content = $"Delete Selected ({count})";
         }
 
@@ -3605,16 +3809,16 @@ namespace DupFree.Views
             List<DeletedFileItem> selectedItems;
             if (_currentViewMode != "list")
             {
-                selectedItems = _selectedRecycleBinItems.ToList();
+                selectedItems = [.. _selectedRecycleBinItems];
             }
             else
             {
-                selectedItems = RecycleBinDataGrid.SelectedItems.Cast<DeletedFileItem>().ToList();
+                selectedItems = [.. RecycleBinDataGrid.SelectedItems.Cast<DeletedFileItem>()];
             }
-            
+
             if (selectedItems.Count == 0)
             {
-                MessageBox.Show("No files selected. Please select files to recover from the list.", 
+                MessageBox.Show("No files selected. Please select files to recover from the list.",
                     "No Selection", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
@@ -3624,7 +3828,7 @@ namespace DupFree.Views
                 : $"Restore {selectedItems.Count} files from Recycle Bin?";
 
             var result = MessageBox.Show(message, "Restore Files", MessageBoxButton.YesNo, MessageBoxImage.Question);
-            
+
             if (result == MessageBoxResult.Yes)
             {
                 int successCount = 0;
@@ -3634,14 +3838,14 @@ namespace DupFree.Views
                 {
                     try
                     {
-                        if (RestoreFromRecycleBin(item.FilePath))
+                        if (item.FilePath != null && RestoreFromRecycleBin(item.FilePath))
                         {
                             _recycleBin.Remove(item);
                             successCount++;
                         }
                         else
                         {
-                            failedFiles.Add(item.FileName);
+                            failedFiles.Add(item.FileName ?? "<unknown>");
                         }
                     }
                     catch (Exception ex)
@@ -3663,7 +3867,7 @@ namespace DupFree.Views
                     MessageBox.Show($"Successfully restored {successCount} file(s).", "Restore Complete", MessageBoxButton.OK, MessageBoxImage.Information);
                 }
             }
-            
+
             if (result == MessageBoxResult.Yes)
             {
                 foreach (var item in selectedItems)
@@ -3683,9 +3887,9 @@ namespace DupFree.Views
                 return;
             }
 
-            var result = MessageBox.Show($"Clear {_recycleBin.Count} file(s) from tracking? Files remain in Windows Recycle Bin.", 
+            var result = MessageBox.Show($"Clear {_recycleBin.Count} file(s) from tracking? Files remain in Windows Recycle Bin.",
                 "Confirm Clear", MessageBoxButton.YesNo, MessageBoxImage.Question);
-            
+
             if (result == MessageBoxResult.Yes)
             {
                 _recycleBin.Clear();
@@ -3699,18 +3903,23 @@ namespace DupFree.Views
             try
             {
                 // Use Shell32 COM to restore from Recycle Bin (dynamic invocation)
-                Type shellType = Type.GetTypeFromProgID("Shell.Application");
-                dynamic shell = Activator.CreateInstance(shellType);
+                Type? shellType = Type.GetTypeFromProgID("Shell.Application");
+                if (shellType == null) return false;
+
+                var shellObj = Activator.CreateInstance(shellType);
+                if (shellObj == null) return false;
+
+                dynamic shell = shellObj;
                 dynamic recycleBin = shell.NameSpace(10); // 10 = Recycle Bin
 
                 if (recycleBin == null)
                 {
-                    System.Diagnostics.Debug.WriteLine("Failed to access Recycle Bin");
+                    Log.Error("Failed to access Recycle Bin");
                     return false;
                 }
 
                 string fileName = Path.GetFileName(filePath);
-                System.Diagnostics.Debug.WriteLine($"Looking for file: {filePath}");
+                Log.Info($"Looking for file: {filePath}");
 
                 foreach (dynamic item in recycleBin.Items())
                 {
@@ -3719,27 +3928,27 @@ namespace DupFree.Views
                         // Get item name and path
                         string itemName = item.Name;
                         string itemPath = item.Path;
-                        
-                        System.Diagnostics.Debug.WriteLine($"Checking item: {itemName} at {itemPath}");
+
+                        Log.Info($"Checking item: {itemName} at {itemPath}");
 
                         // Try to match by name first (since path in recycle bin is different)
                         if (itemName.Equals(fileName, StringComparison.OrdinalIgnoreCase))
                         {
-                            System.Diagnostics.Debug.WriteLine($"Found matching file by name: {itemName}");
-                            
+                            Log.Info($"Found matching file by name: {itemName}");
+
                             // Try different restore verbs
                             bool restored = DoVerbs(item, "ESTORE") || // Contains "RESTORE"
                                           DoVerbs(item, "&Restore") || // Menu text
                                           DoVerbs(item, "Restore");    // Direct name
-                            
+
                             if (restored)
                             {
                                 System.Threading.Thread.Sleep(500); // Give more time to restore
-                                
+
                                 // Check if file was restored
                                 if (File.Exists(filePath))
                                 {
-                                    System.Diagnostics.Debug.WriteLine($"Successfully restored: {filePath}");
+                                    Log.Info($"Successfully restored: {filePath}");
                                     return true;
                                 }
                             }
@@ -3747,16 +3956,16 @@ namespace DupFree.Views
                     }
                     catch (Exception ex)
                     {
-                        System.Diagnostics.Debug.WriteLine($"Error checking item: {ex.Message}");
+                        Log.Error($"Error checking item: {ex.Message}");
                     }
                 }
 
-                System.Diagnostics.Debug.WriteLine($"File not found in recycle bin: {fileName}");
+                Log.Info($"File not found in recycle bin: {fileName}");
                 return false;
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"RestoreFromRecycleBin error: {ex.Message}");
+                Log.Error($"RestoreFromRecycleBin error: {ex.Message}");
                 return false;
             }
         }
@@ -3768,11 +3977,11 @@ namespace DupFree.Views
                 foreach (dynamic itemVerb in item.Verbs())
                 {
                     string verbName = itemVerb.Name;
-                    System.Diagnostics.Debug.WriteLine($"Available verb: {verbName}");
-                    
+                    Log.Info($"Available verb: {verbName}");
+
                     if (verbName.ToUpper().Contains(verb.ToUpper()))
                     {
-                        System.Diagnostics.Debug.WriteLine($"Executing verb: {verbName}");
+                        Log.Info($"Executing verb: {verbName}");
                         itemVerb.DoIt();
                         return true;
                     }
@@ -3780,7 +3989,7 @@ namespace DupFree.Views
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"DoVerbs error: {ex.Message}");
+                Log.Error($"DoVerbs error: {ex.Message}");
             }
             return false;
         }
@@ -3801,7 +4010,7 @@ namespace DupFree.Views
                         var panel = child.Child as StackPanel;
                         file = panel?.Tag as FileItemViewModel;
                     }
-                    
+
                     if (file != null && _selectedGridItems.Contains(file))
                     {
                         // Apply highlight to Border
@@ -3827,7 +4036,7 @@ namespace DupFree.Views
                         var panel = child.Child as StackPanel;
                         file = panel?.Tag as FileItemViewModel;
                     }
-                    
+
                     if (file != null && _selectedGridItems.Contains(file))
                     {
                         child.Background = new SolidColorBrush(Color.FromArgb(120, 59, 130, 246)); // Bright blue
@@ -3853,14 +4062,14 @@ namespace DupFree.Views
                 : $"{selectedItems.Count} files are in Windows Recycle Bin.\n\nYou can restore them from Windows Recycle Bin if needed.\n\nRemove from tracking list?";
 
             var result = MessageBox.Show(message, "Remove from Bin", MessageBoxButton.YesNo, MessageBoxImage.Question);
-            
+
             if (result == MessageBoxResult.Yes)
             {
                 foreach (var item in selectedItems)
                 {
                     _recycleBin.Remove(item);
                 }
-                
+
                 UpdateRecycleBinDisplay();
             }
         }
@@ -3874,20 +4083,20 @@ namespace DupFree.Views
             {
                 _recycleBin.Remove(item);
             }
-            
+
             UpdateRecycleBinDisplay();
         }
     }
 
-    // Deleted file item for recycle bin
+    /// <summary>Represents a file tracked in the application's recycle bin UI.</summary>
     public class DeletedFileItem
     {
-        public string FileName { get; set; }
-        public string FilePath { get; set; }
+        public string? FileName { get; set; }
+        public string? FilePath { get; set; }
         public long FileSize { get; set; }
-        public string FileSizeFormatted { get; set; }
+        public string? FileSizeFormatted { get; set; }
         public DateTime DeletedTime { get; set; }
-        public FileItemViewModel OriginalViewModel { get; set; }
-        public BitmapImage Thumbnail { get; set; }
+        public FileItemViewModel? OriginalViewModel { get; set; }
+        public BitmapImage? Thumbnail { get; set; }
     }
 }

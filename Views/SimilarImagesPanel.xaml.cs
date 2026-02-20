@@ -16,13 +16,13 @@ namespace DupFree.Views
 {
     public partial class SimilarImagesPanel : UserControl
     {
-        private ObservableCollection<SimilarImageGroupViewModel> _similarGroups = new();
-        private SimilarImageService _similarImageService;
-        private List<string> _currentDirectories = new();
-        private CancellationTokenSource _scanCancellation;
+        private readonly ObservableCollection<SimilarImageGroupViewModel> _similarGroups = [];
+        private readonly SimilarImageService _similarImageService;
+        private List<string> _currentDirectories = [];
+        private CancellationTokenSource? _scanCancellation;
         private bool _isScanning = false;
         private DateTime _scanStartTime;
-        private System.Windows.Threading.DispatcherTimer _timerDisplay;
+        private readonly System.Windows.Threading.DispatcherTimer _timerDisplay;
 
         public SimilarImagesPanel()
         {
@@ -35,12 +35,14 @@ namespace DupFree.Views
             // Setup event handlers
             _similarImageService.OnStatusChanged += (status) => Dispatcher.Invoke(() => UpdateStatus(status));
             _similarImageService.OnProgressChanged += (progress) => Dispatcher.Invoke(() => UpdateProgress(progress));
-            
+
             // Timer for elapsed time display (disabled by default)
-            _timerDisplay = new System.Windows.Threading.DispatcherTimer();
-            _timerDisplay.Interval = TimeSpan.FromMilliseconds(100);
+            _timerDisplay = new System.Windows.Threading.DispatcherTimer
+            {
+                Interval = TimeSpan.FromMilliseconds(100)
+            };
             _timerDisplay.Tick += (s, e) => UpdateTimerDisplay();
-            
+
             // Monitor for selection changes
             _similarGroups.CollectionChanged += (s, e) =>
             {
@@ -107,8 +109,7 @@ namespace DupFree.Views
 
             if (_currentDirectories.Count == 0)
             {
-                var mainWindow = Window.GetWindow(this) as MainWindow;
-                if (mainWindow != null)
+                if (Window.GetWindow(this) is MainWindow mainWindow)
                 {
                     if (!mainWindow.TrySelectDirectories(autoScan: false))
                         return;
@@ -145,7 +146,7 @@ namespace DupFree.Views
             var groupViewModels = new Dictionary<string, SimilarImageGroupViewModel>();
 
             // Subscribe to streaming events
-            Action<SimilarImageGroup> onGroupFound = (group) =>
+            void onGroupFound(SimilarImageGroup group)
             {
                 Dispatcher.Invoke(() =>
                 {
@@ -169,9 +170,9 @@ namespace DupFree.Views
                     _similarGroups.Add(vmGroup);
                     StatusText.Text = $"Found {_similarGroups.Count} groups (scanning...)";
                 });
-            };
+            }
 
-            Action<string, FileItemViewModel> onImageAdded = (groupId, image) =>
+            void onImageAdded(string groupId, FileItemViewModel image)
             {
                 Dispatcher.Invoke(() =>
                 {
@@ -185,7 +186,7 @@ namespace DupFree.Views
                         };
                     }
                 });
-            };
+            }
 
             _similarImageService.OnGroupFound += onGroupFound;
             _similarImageService.OnImageAddedToGroup += onImageAdded;
@@ -258,7 +259,7 @@ namespace DupFree.Views
         {
             // Build preferences list
             var preferences = new List<string>();
-            
+
             if (SettingsService.AutoSelectKeepUncompressed)
                 preferences.Add("keep_uncompressed");
             if (SettingsService.AutoSelectKeepHigherResolution)
@@ -267,21 +268,23 @@ namespace DupFree.Views
                 preferences.Add("keep_larger");
 
             // Mark images for deletion based on preferences
-            var imagesToKeep = new HashSet<FileItemViewModel>();
-            imagesToKeep.Add(group.Images[0]); // Always keep first as default
+            var imagesToKeep = new HashSet<FileItemViewModel>
+            {
+                group.Images[0] // Always keep first as default
+            };
 
             foreach (var preference in preferences)
             {
                 switch (preference)
                 {
                     case "keep_uncompressed":
-                        KeepUncompressedFormats(group.Images.ToList(), imagesToKeep);
+                        KeepUncompressedFormats([.. group.Images], imagesToKeep);
                         break;
                     case "keep_higher_res":
-                        KeepHigherResolution(group.Images.ToList(), imagesToKeep);
+                        KeepHigherResolution([.. group.Images], imagesToKeep);
                         break;
                     case "keep_larger":
-                        KeepLargerFilesize(group.Images.ToList(), imagesToKeep);
+                        KeepLargerFilesize([.. group.Images], imagesToKeep);
                         break;
                 }
             }
@@ -478,7 +481,7 @@ namespace DupFree.Views
             }
         }
 
-        private FileItemViewModel _selectedForPreview = null;
+        private FileItemViewModel? _selectedForPreview = null;
 
         private void Thumbnail_MouseDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
         {
@@ -520,7 +523,7 @@ namespace DupFree.Views
 
             PreviewFileName.Text = fileItem.FileName;
             PreviewFilePath.Text = fileItem.FilePath;
-            
+
             try
             {
                 var fileInfo = new FileInfo(fileItem.FilePath);
@@ -547,13 +550,13 @@ namespace DupFree.Views
 
         private string FormatBytes(long bytes)
         {
-            string[] sizes = { "B", "KB", "MB", "GB" };
+            string[] sizes = ["B", "KB", "MB", "GB"];
             double len = bytes;
             int order = 0;
             while (len >= 1024 && order < sizes.Length - 1)
             {
                 order++;
-                len = len / 1024;
+                len /= 1024;
             }
             return $"{len:0.##} {sizes[order]}";
         }

@@ -11,11 +11,18 @@ using ImageMagick;
 
 namespace DupFree.Services
 {
+    /// <summary>
+    /// Helper methods to produce thumbnails, extract frames and handle animated images for the UI.
+    /// Methods are safe to call from background threads unless otherwise documented.
+    /// </summary>
     public class ImagePreviewService
     {
-        private static readonly string[] ImageExtensions = { ".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp", ".tiff", ".ico" };
-        private static readonly string[] VideoExtensions = { ".mp4", ".mov", ".avi", ".mkv", ".webm", ".wmv" };
+        private static readonly string[] ImageExtensions = [".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp", ".tiff", ".ico"];
+        private static readonly string[] VideoExtensions = [".mp4", ".mov", ".avi", ".mkv", ".webm", ".wmv"];
 
+        /// <summary>Returns true if the file extension denotes an image format supported by the previewer.</summary>
+        /// <param name="filePath">Path to the file to inspect.</param>
+        /// <returns>True when the file is a supported static image (jpg, png, bmp, etc.).</returns>
         public static bool IsPreviewableImage(string filePath)
         {
             try
@@ -29,11 +36,17 @@ namespace DupFree.Services
             }
         }
 
+        /// <summary>Returns true when the file is a supported video format (used to display poster/thumbnail).</summary>
+        /// <param name="filePath">Path to the file to inspect.</param>
+        /// <returns>True for common video file extensions (mp4, mkv, etc.).</returns>
         public static bool IsVideoFile(string filePath)
         {
             try { return VideoExtensions.Contains(Path.GetExtension(filePath).ToLower()); } catch { return false; }
         }
 
+        /// <summary>Determines whether a .webp file contains multiple frames (animated WebP).</summary>
+        /// <param name="filePath">Path to the .webp file.</param>
+        /// <returns>True if the WebP contains more than one frame.</returns>
         public static bool IsAnimatedWebP(string filePath)
         {
             try
@@ -45,9 +58,13 @@ namespace DupFree.Services
             catch { return false; }
         }
 
-        // Return a frozen BitmapImage for static images (safe to create on background threads).
-        // For animated GIF/WebP we return null — callers should use GetAnimatedImageBytes + CreateBitmapImageFromBytes on UI thread.
-        public static BitmapImage GetThumbnail(string filePath, int maxWidth = 256, int maxHeight = 256)
+        /// <summary>Returns a frozen BitmapImage thumbnail for a static image file (safe on background threads).</summary>
+        /// <remarks>Returns null for animated GIF/WebP; callers should use GetAnimatedImageBytes for animated content.</remarks>
+        /// <param name="filePath">File path of the image.</param>
+        /// <param name="maxWidth">Maximum width of the returned thumbnail.</param>
+        /// <param name="maxHeight">Maximum height of the returned thumbnail.</param>
+        /// <returns>Frozen <see cref="BitmapImage"/> or null if preview cannot be produced or image is animated.</returns>
+        public static BitmapImage? GetThumbnail(string filePath, int maxWidth = 256, int maxHeight = 256)
         {
             try
             {
@@ -93,8 +110,12 @@ namespace DupFree.Services
             }
         }
 
-        // For animated images (GIF / animated WebP) return bytes suitable for WPF animation (GIF bytes)
-        public static byte[] GetAnimatedImageBytes(string filePath, int maxWidth = 256, int maxHeight = 256)
+        /// <summary>Returns GIF-compatible bytes for animated images (GIF or animated WebP) scaled to the requested size.</summary>
+        /// <param name="filePath">Animated image path.</param>
+        /// <param name="maxWidth">Max width for output frames.</param>
+        /// <param name="maxHeight">Max height for output frames.</param>
+        /// <returns>Byte[] containing GIF data suitable for WPF animation or null on failure.</returns>
+        public static byte[]? GetAnimatedImageBytes(string filePath, int maxWidth = 256, int maxHeight = 256)
         {
             try
             {
@@ -135,7 +156,12 @@ namespace DupFree.Services
             catch { return null; }
         }
 
-        public static BitmapImage GetFirstFrameBitmap(string filePath, int maxWidth = 256, int maxHeight = 256)
+        /// <summary>Returns a frozen BitmapImage of the first frame of an image (useful for multi-frame formats).</summary>
+        /// <param name="filePath">Path to the image file.</param>
+        /// <param name="maxWidth">Desired maximum width.</param>
+        /// <param name="maxHeight">Desired maximum height.</param>
+        /// <returns>A frozen <see cref="BitmapImage"/> of the first frame, or null on failure.</returns>
+        public static BitmapImage? GetFirstFrameBitmap(string filePath, int maxWidth = 256, int maxHeight = 256)
         {
             try
             {
@@ -165,7 +191,7 @@ namespace DupFree.Services
         // Create a BitmapImage from raw bytes on the UI thread. Do NOT Freeze when the bytes represent an animated GIF.
         // Use BitmapCacheOption.OnLoad so stream-backed images (animated GIF bytes) are fully loaded during EndInit.
         // This prevents the MemoryStream from being required after initialization which otherwise breaks animation.
-        public static BitmapImage CreateBitmapImageFromBytes(byte[] bytes, int decodePixelWidth = 0, bool freeze = true)
+        public static BitmapImage? CreateBitmapImageFromBytes(byte[]? bytes, int decodePixelWidth = 0, bool freeze = true)
         {
             if (bytes == null) return null;
 
@@ -259,7 +285,7 @@ namespace DupFree.Services
 
         // Return a video/poster thumbnail using the Windows shell (IShellItemImageFactory).
         // This gives a robust poster frame for many video formats even when MediaElement cannot play them.
-        public static BitmapImage GetVideoThumbnail(string filePath, int width = 256, int height = 256)
+        public static BitmapImage? GetVideoThumbnail(string filePath, int width = 256, int height = 256)
         {
             try
             {
@@ -323,9 +349,13 @@ namespace DupFree.Services
         private static extern bool DeleteObject(IntPtr hObject);
         #endregion
 
+        /// <summary>Formats a file size value into a human-readable string according to the current size unit setting.</summary>
+        /// <param name="bytes">Number of bytes.</param>
+        /// <param name="unit">Optional size unit override (Auto chooses best unit).</param>
+        /// <returns>Formatted file size (e.g. "1.2 MB").</returns>
         public static string FormatFileSize(long bytes, SizeUnit? unit = null)
         {
-            string[] sizes = { "B", "KB", "MB", "GB", "TB" };
+            string[] sizes = ["B", "KB", "MB", "GB", "TB"];
             var useUnit = unit ?? Services.SettingsService.CurrentSizeUnit;
             double len = bytes;
             int order = 0;
@@ -335,7 +365,7 @@ namespace DupFree.Services
                 while (len >= 1024 && order < sizes.Length - 1)
                 {
                     order++;
-                    len = len / 1024;
+                    len /= 1024;
                 }
                 return $"{len:0.##} {sizes[order]}";
             }
@@ -351,7 +381,7 @@ namespace DupFree.Services
                     while (len >= 1024 && order < sizes.Length - 1)
                     {
                         order++;
-                        len = len / 1024;
+                        len /= 1024;
                     }
                     return $"{len:0.##} {sizes[order]}";
             }

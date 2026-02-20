@@ -9,11 +9,11 @@ namespace DupFree.Services
 {
     internal class PhashEntry
     {
-        public string Path { get; set; }
+        public string Path { get; set; } = string.Empty;
         public ulong PackedHash { get; set; }
         public long Length { get; set; }
         public long LastWriteUtcTicks { get; set; }
-        public List<ulong> TileHashes { get; set; } = new();
+        public List<ulong> TileHashes { get; set; } = new List<ulong>();
     }
 
     internal class BKTree
@@ -21,12 +21,12 @@ namespace DupFree.Services
         private class Node
         {
             public ulong Hash;
-            public List<int> Indices = new();
-            public Dictionary<int, Node> Children = new();
+            public List<int> Indices = new List<int>();
+            public Dictionary<int, Node> Children = new Dictionary<int, Node>();
             public Node(ulong h, int idx) { Hash = h; Indices.Add(idx); }
         }
 
-        private Node _root;
+        private Node? _root;
 
         public void Add(ulong hash, int idx)
         {
@@ -75,8 +75,8 @@ namespace DupFree.Services
         public static (List<PhashEntry> entries, BKTree tree, Dictionary<ulong, List<int>> tileIndex) LoadOrBuild(
             string cacheDir,
             List<string> paths,
-            Func<string, (byte[] hash, ulong packed)> computeHash,
-            Func<string, IEnumerable<ulong>> computeTileHashes = null)
+            Func<string, (byte[]? hash, ulong packed)> computeHash,
+            Func<string, IEnumerable<ulong>>? computeTileHashes = null)
         {
             var idxPath = Path.Combine(cacheDir, IndexFileName);
             var existing = new Dictionary<string, PhashEntry>(StringComparer.OrdinalIgnoreCase);
@@ -152,7 +152,7 @@ namespace DupFree.Services
                 if (e.TileHashes == null) continue;
                 foreach (var th in e.TileHashes)
                 {
-                    if (!tileIndex.TryGetValue(th, out var list)) { list = new List<int>(); tileIndex[th] = list; }
+                    if (!tileIndex.TryGetValue(th, out var list)) { list = []; tileIndex[th] = list; }
                     list.Add(i);
                 }
             }

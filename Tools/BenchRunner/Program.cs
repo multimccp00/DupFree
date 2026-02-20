@@ -10,7 +10,7 @@ class Program
         static async Task<int> Main(string[] args)
     {
         string dir = args.Length > 0 ? args[0] : ".";
-        string csvPath = null;
+        string? csvPath = null;
         int hashOverride = -1;
         int ssimSize = 128;
         bool visipicsMode = false;
@@ -57,29 +57,29 @@ class Program
         }
         if (!System.IO.Directory.Exists(dir))
         {
-            Console.WriteLine($"Directory not found: {dir}");
+            Log.Error($"Directory not found: {dir}");
             return 2;
         }
 
         var service = new SimilarImageService();
-        service.OnStatusChanged += s => Console.WriteLine($"[status] {s}");
+        service.OnStatusChanged += s => Log.Info($"[status] {s}");
 
-        Console.WriteLine($"Benchmark: scanning '{dir}'");
+        Log.Info($"Benchmark: scanning '{dir}'");
         var sw = Stopwatch.StartNew();
             try
             {
                 var result = await service.FindSimilarImagesAsync(new List<string> { dir }, maxDistance: 92.0, showClosestPairsOnly: false, closestPairCount: 20, progress: null, cancellationToken: CancellationToken.None, exportEdgeCsv: csvPath, hashThresholdOverride: hashOverride, ssimThumbnailSize: ssimSize, visipicsMode: visipicsMode, forceBruteForce: forceBrute, useSimdSsim: simdSsim, useGpuSsim: gpuSsim);
             sw.Stop();
-            Console.WriteLine($"Elapsed: {sw.Elapsed}");
-            Console.WriteLine($"Groups found: {result.Count}");
+            Log.Info($"Elapsed: {sw.Elapsed}");
+            Log.Info($"Groups found: {result.Count}");
             int imgs = 0;
             foreach (var g in result) imgs += g.Images?.Count ?? 0;
-            Console.WriteLine($"Total images contained in groups: {imgs}");
+            Log.Info($"Total images contained in groups: {imgs}");
         }
         catch (Exception ex)
         {
             sw.Stop();
-            Console.WriteLine($"Benchmark failed after {sw.Elapsed}: {ex}");
+            Log.Error($"Benchmark failed after {sw.Elapsed}: {ex}");
             return 1;
         }
 

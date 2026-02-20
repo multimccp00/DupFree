@@ -14,29 +14,37 @@ using ImageMagick;
 
 namespace DupFree.Services
 {
+    /// <summary>
+    /// Options used by the automatic selection algorithm when choosing the preferred file
+    /// from a group of similar images.
+    /// </summary>
     public class AutoSelectOptions
     {
         public bool PreferUncompressed { get; set; } = false;
         public bool PreferHigherResolution { get; set; } = true;
         public bool PreferLargerFilesize { get; set; } = false;
-        public List<string> PreferredDirectories { get; set; } = new();
+        public List<string> PreferredDirectories { get; set; } = [];
     }
 
+    /// <summary>Represents a set of visually similar images discovered by the finder.</summary>
     public class SimilarImageGroup
     {
-        public List<FileItemViewModel> Images { get; set; } = new();
+        public List<FileItemViewModel> Images { get; set; } = [];
+        /// <summary>Similarity score in range [0,1] where higher means more similar.</summary>
         public double SimilarityScore { get; set; }
-        public string GroupId { get; set; }
+        public string GroupId { get; set; } = string.Empty;
     }
 
+    /// <summary>Service that finds visually similar images using a fast hash prefilter and SSIM verification.</summary>
+    /// <remarks>Reports progress and discovered groups via events.</remarks>
     public class SimilarImageService
     {
         private static readonly double CompositeWeightSsim = 0.65;
         private static readonly double CompositeWeightHash = 0.15;
         private static readonly double CompositeWeightHist = 0.10;
         private static readonly double CompositeWeightComp = 0.10;
-        
-        private readonly SynchronizationContext _syncContext;
+
+        private readonly SynchronizationContext? _syncContext;
 
         public SimilarImageService()
         {
@@ -48,54 +56,56 @@ namespace DupFree.Services
             var res = new List<ulong>();
             try
             {
-                using (var img = Image.FromFile(path))
+                using var img = Image.FromFile(path);
+                int w = img.Width;
+                int h = img.Height;
+                int gw = grid, gh = grid;
+                for (int gy = 0; gy < gh; gy++)
                 {
-                    int w = img.Width;
-                    int h = img.Height;
-                    int gw = grid, gh = grid;
-                    for (int gy = 0; gy < gh; gy++)
+                    for (int gx = 0; gx < gw; gx++)
                     {
-                        for (int gx = 0; gx < gw; gx++)
+                        int x0 = (int)Math.Floor((double)gx * w / gw);
+                        int y0 = (int)Math.Floor((double)gy * h / gh);
+                        int x1 = (int)Math.Ceiling((double)(gx + 1) * w / gw);
+                        int y1 = (int)Math.Ceiling((double)(gy + 1) * h / gh);
+                        int tw = Math.Max(8, x1 - x0);
+                        int th = Math.Max(8, y1 - y0);
+                        try
                         {
-                            int x0 = (int)Math.Floor((double)gx * w / gw);
-                            int y0 = (int)Math.Floor((double)gy * h / gh);
-                            int x1 = (int)Math.Ceiling((double)(gx + 1) * w / gw);
-                            int y1 = (int)Math.Ceiling((double)(gy + 1) * h / gh);
-                            int tw = Math.Max(8, x1 - x0);
-                            int th = Math.Max(8, y1 - y0);
-                            try
+                            var bmp = new Bitmap(tw, th);
+                            using (var g = Graphics.FromImage(bmp))
                             {
-                                var bmp = new Bitmap(tw, th);
-                                using (var g = Graphics.FromImage(bmp))
-                                {
-                                    g.DrawImage(img, new Rectangle(0, 0, tw, th), new Rectangle(x0, y0, tw, th), GraphicsUnit.Pixel);
-                                }
-                                var (hbytes, packed) = ComputePerceptualHash(bmp);
-                                res.Add(packed);
-                                bmp.Dispose();
+                                g.DrawImage(img, new Rectangle(0, 0, tw, th), new Rectangle(x0, y0, tw, th), GraphicsUnit.Pixel);
                             }
-                            catch { }
+                            var (hbytes, packed) = ComputePerceptualHash(bmp);
+                            res.Add(packed);
+                            bmp.Dispose();
                         }
+                        catch { }
                     }
                 }
             }
             catch { }
-            return res.Distinct().ToList();
+            return [.. res.Distinct()];
         }
-        public event Action<string> OnStatusChanged;
-        public event Action<int> OnProgressChanged;
+
+        /// <summary>Raised to communicate textual status updates (e.g. "Hashing 123/456").</summary>
+        public event Action<string>? OnStatusChanged;
+
+        /// <summary>Raised to report scan progress as an integer percent (0–100).</summary>
+        public event Action<int>? OnProgressChanged;
 
         /// <summary>
         /// Fired on the background thread whenever a new group is found or an existing group gains a member.
         /// The UI should marshal this to the dispatcher.
         /// </summary>
-        public event Action<SimilarImageGroup> OnGroupFound;
+        public event Action<SimilarImageGroup>? OnGroupFound;
 
         /// <summary>
         /// Fired when a new image is added to an already-reported group.
         /// Parameters: (groupId, newImage)
         /// </summary>
-        public event Action<string, FileItemViewModel> OnImageAddedToGroup;
+        public event Action<string, FileItemViewModel>? OnImageAddedToGroup;
 
         /// <summary>
         /// Streams similar image groups progressively as they are discovered.
@@ -106,9 +116,9 @@ namespace DupFree.Services
             double maxDistance = 92.0,
             bool showClosestPairsOnly = false,
             int closestPairCount = 20,
-            IProgress<(int current, int total)> progress = null,
+            IProgress<(int current, int total)>? progress = null,
             CancellationToken cancellationToken = default,
-            string exportEdgeCsv = null,
+            string? exportEdgeCsv = null,
             int hashThresholdOverride = -1,
             int ssimThumbnailSize = 128,
             bool visipicsMode = false,
@@ -126,9 +136,9 @@ namespace DupFree.Services
             double maxDistance,
             bool showClosestPairsOnly,
             int closestPairCount,
-            IProgress<(int current, int total)> progress,
+            IProgress<(int current, int total)>? progress,
             CancellationToken ct,
-            string exportEdgeCsv,
+            string? exportEdgeCsv,
             int hashThresholdOverride,
             int ssimThumbnailSize,
             bool visipicsMode,
@@ -160,29 +170,29 @@ namespace DupFree.Services
             // 2. PHASE 1: Fast hash computation (O(N)) - PARALLELIZED
             RaiseStatus("Computing perceptual hashes...");
             var entriesLock = new object();
-            var entries = new System.Collections.Concurrent.ConcurrentBag<(string path, byte[] hash, ulong packedHash, float[] hist, float[] spatial, int originalIndex)>();
-            
-            Parallel.For(0, imageFiles.Count, new ParallelOptions 
-            { 
+            var entries = new System.Collections.Concurrent.ConcurrentBag<(string path, byte[]? hash, ulong packedHash, float[]? hist, float[]? spatial, int originalIndex)>();
+
+            Parallel.For(0, imageFiles.Count, new ParallelOptions
+            {
                 MaxDegreeOfParallelism = Environment.ProcessorCount,
-                CancellationToken = ct 
+                CancellationToken = ct
             }, i =>
             {
                 string filePath = imageFiles[i];
                 var (hash, packedHash) = GetImageHash(filePath);
-                    // defer histogram/spatial computation to when needed (lazy cache)
-                    float[] hist = null;
-                    float[] spatial = null;
+                // defer histogram/spatial computation to when needed (lazy cache)
+                float[]? hist = null;
+                float[]? spatial = null;
                 if (hash != null)
                 {
                     entries.Add((filePath, hash, packedHash, hist, spatial, i));
                 }
 
-                    if (i % 10 == 0)
-                    {
-                        RaiseStatus($"Hashing {i + 1}/{imageFiles.Count}...");
-                        progress?.Report((i + 1, imageFiles.Count));
-                    }
+                if (i % 10 == 0)
+                {
+                    RaiseStatus($"Hashing {i + 1}/{imageFiles.Count}...");
+                    progress?.Report((i + 1, imageFiles.Count));
+                }
             });
 
             // (was disposing a shared GPU helper here prematurely) - will dispose at method end
@@ -193,15 +203,15 @@ namespace DupFree.Services
 
             // 3. PHASE 2: Build candidate pairs using hash pre-filter (fast, reduces SSIM comparisons)
             RaiseStatus("Finding hash-similar candidates (using BK-tree index)...");
-            
+
             // Allow user to lower similarity down to 75% (was previously clamped to 85%)
             double ssimThreshold = Math.Clamp(maxDistance, 75.0, 99.0) / 100.0;
             // Use LOOSER hash threshold (25 bits) since we skip exact duplicates anyway
             int hashThreshold = hashThresholdOverride > 0 ? hashThresholdOverride : 25;
-            
+
             var candidatePairs = new System.Collections.Concurrent.ConcurrentBag<(int i, int j, int hashDist)>();
-            var histCache = new System.Collections.Concurrent.ConcurrentDictionary<int, float[]>();
-            var spatialCache = new System.Collections.Concurrent.ConcurrentDictionary<int, float[]>();
+            var histCache = new System.Collections.Concurrent.ConcurrentDictionary<int, float[]?>();
+            var spatialCache = new System.Collections.Concurrent.ConcurrentDictionary<int, float[]?>();
             double histThreshold = 0.95;
             double compositeThreshold = ssimThreshold;
             double compThreshold = 0.95;
@@ -211,7 +221,7 @@ namespace DupFree.Services
             if (visipicsMode)
             {
                 RaiseStatus("Running VisiPics-fast greedy pass...");
-                var visThumbCache = new System.Collections.Concurrent.ConcurrentDictionary<int, MagickImage>();
+                var visThumbCache = new System.Collections.Concurrent.ConcurrentDictionary<int, MagickImage?>();
                 var removed = new bool[sortedEntries.Count];
                 var resultsGreedy = new List<SimilarImageGroup>();
 
@@ -227,7 +237,7 @@ namespace DupFree.Services
                         if (ct.IsCancellationRequested) break;
                         if (removed[j]) continue;
 
-                        
+
 
                         // quick file-name/size skip
                         try
@@ -269,8 +279,10 @@ namespace DupFree.Services
                             try
                             {
                                 var img = new MagickImage(sortedEntries[idx].path);
-                                var geo = new MagickGeometry((uint)ssimThumbnailSize, (uint)ssimThumbnailSize);
-                                geo.IgnoreAspectRatio = false;
+                                var geo = new MagickGeometry((uint)ssimThumbnailSize, (uint)ssimThumbnailSize)
+                                {
+                                    IgnoreAspectRatio = false
+                                };
                                 img.Resize(geo);
                                 img.Extent((uint)ssimThumbnailSize, (uint)ssimThumbnailSize, Gravity.Center, MagickColors.Black);
                                 return img;
@@ -283,8 +295,10 @@ namespace DupFree.Services
                             try
                             {
                                 var img = new MagickImage(sortedEntries[idx].path);
-                                var geo = new MagickGeometry((uint)ssimThumbnailSize, (uint)ssimThumbnailSize);
-                                geo.IgnoreAspectRatio = false;
+                                var geo = new MagickGeometry((uint)ssimThumbnailSize, (uint)ssimThumbnailSize)
+                                {
+                                    IgnoreAspectRatio = false
+                                };
                                 img.Resize(geo);
                                 img.Extent((uint)ssimThumbnailSize, (uint)ssimThumbnailSize, Gravity.Center, MagickColors.Black);
                                 return img;
@@ -334,7 +348,7 @@ namespace DupFree.Services
                         var group = new SimilarImageGroup
                         {
                             GroupId = $"visipics_group_{results.Count}",
-                            Images = members.Select(mi => CreateFileItem(sortedEntries[mi].path)).ToList(),
+                            Images = [.. members.Select(mi => CreateFileItem(sortedEntries[mi].path))],
                             SimilarityScore = 0.0
                         };
                         results.Add(group);
@@ -345,7 +359,10 @@ namespace DupFree.Services
                 }
 
                 // cleanup thumbnail cache
-                foreach (var kv in visThumbCache) try { kv.Value.Dispose(); } catch { }
+                foreach (var kv in visThumbCache)
+                {
+                    try { kv.Value?.Dispose(); } catch { }
+                }
 
                 RaiseStatus($"VisiPics-fast done. Found {results.Count} groups");
                 return results;
@@ -377,13 +394,13 @@ namespace DupFree.Services
                             {
                                 if (tileIndex.TryGetValue(th, out var list))
                                 {
-                                            foreach (var ni in list) if (ni > i) candidatesSet.Add(ni);
+                                    foreach (var ni in list) if (ni > i) candidatesSet.Add(ni);
                                 }
                             }
                         }
 
-                                foreach (var ni in candidatesSet)
-                            {
+                        foreach (var ni in candidatesSet)
+                        {
                             // hist/comp prefilter on demand
                             var histA = histCache.GetOrAdd(i, idx => { try { return ComputeColorHistogram(sortedEntries[idx].path); } catch { return null; } });
                             var histB = histCache.GetOrAdd(ni, idx => { try { return ComputeColorHistogram(sortedEntries[idx].path); } catch { return null; } });
@@ -414,32 +431,36 @@ namespace DupFree.Services
                 catch
                 {
                     // fallback to original O(N^2) scanning (rare)
-                    Parallel.For(0, sortedEntries.Count, new ParallelOptions 
-                    { 
+                    Parallel.For(0, sortedEntries.Count, new ParallelOptions
+                    {
                         MaxDegreeOfParallelism = Environment.ProcessorCount,
-                        CancellationToken = ct 
+                        CancellationToken = ct
                     }, i =>
                     {
                         for (int j = i + 1; j < sortedEntries.Count; j++)
                         {
                             if (ct.IsCancellationRequested) return;
 
-                            
+
 
                             int dist = int.MaxValue;
                             if (sortedEntries[i].hash != null && sortedEntries[j].hash != null)
                                 dist = HammingDistancePacked(sortedEntries[i].packedHash, sortedEntries[j].packedHash, hashThreshold);
                             // quick color histogram prefilter to avoid obvious mismatches (compute on demand)
-                            var histA = histCache.GetOrAdd(i, idx => {
+                            var histA = histCache.GetOrAdd(i, idx =>
+                            {
                                 try { return ComputeColorHistogram(sortedEntries[idx].path); } catch { return null; }
                             });
-                            var histB = histCache.GetOrAdd(j, idx => {
+                            var histB = histCache.GetOrAdd(j, idx =>
+                            {
                                 try { return ComputeColorHistogram(sortedEntries[idx].path); } catch { return null; }
                             });
-                            var compA = spatialCache.GetOrAdd(i, idx => {
+                            var compA = spatialCache.GetOrAdd(i, idx =>
+                            {
                                 try { return ComputeSpatialHistogram(sortedEntries[idx].path); } catch { return null; }
                             });
-                            var compB = spatialCache.GetOrAdd(j, idx => {
+                            var compB = spatialCache.GetOrAdd(j, idx =>
+                            {
                                 try { return ComputeSpatialHistogram(sortedEntries[idx].path); } catch { return null; }
                             });
                             bool histOk = true;
@@ -467,10 +488,10 @@ namespace DupFree.Services
             else
             {
                 // force brute-force path requested: original O(N^2) scanning
-                Parallel.For(0, sortedEntries.Count, new ParallelOptions 
-                { 
+                Parallel.For(0, sortedEntries.Count, new ParallelOptions
+                {
                     MaxDegreeOfParallelism = Environment.ProcessorCount,
-                    CancellationToken = ct 
+                    CancellationToken = ct
                 }, i =>
                 {
                     for (int j = i + 1; j < sortedEntries.Count; j++)
@@ -481,16 +502,20 @@ namespace DupFree.Services
                         if (sortedEntries[i].hash != null && sortedEntries[j].hash != null)
                             dist = HammingDistancePacked(sortedEntries[i].packedHash, sortedEntries[j].packedHash, hashThreshold);
                         // quick color histogram prefilter to avoid obvious mismatches (compute on demand)
-                        var histA = histCache.GetOrAdd(i, idx => {
+                        var histA = histCache.GetOrAdd(i, idx =>
+                        {
                             try { return ComputeColorHistogram(sortedEntries[idx].path); } catch { return null; }
                         });
-                        var histB = histCache.GetOrAdd(j, idx => {
+                        var histB = histCache.GetOrAdd(j, idx =>
+                        {
                             try { return ComputeColorHistogram(sortedEntries[idx].path); } catch { return null; }
                         });
-                        var compA = spatialCache.GetOrAdd(i, idx => {
+                        var compA = spatialCache.GetOrAdd(i, idx =>
+                        {
                             try { return ComputeSpatialHistogram(sortedEntries[idx].path); } catch { return null; }
                         });
-                        var compB = spatialCache.GetOrAdd(j, idx => {
+                        var compB = spatialCache.GetOrAdd(j, idx =>
+                        {
                             try { return ComputeSpatialHistogram(sortedEntries[idx].path); } catch { return null; }
                         });
                         bool histOk = true;
@@ -526,11 +551,11 @@ namespace DupFree.Services
 
             // 4. PHASE 3: SSIM verification on candidates only (compute SSIMs in parallel and stream groups as found)
             RaiseStatus($"Verifying {sortedCandidates.Count} candidates with SSIM (parallel streaming)...");
-            
+
             // Calculate total operations for overall progress tracking
             int totalOps = imageFiles.Count + sortedCandidates.Count;
             RaiseProgress(0);  // Reset progress to 0 as SSIM phase begins
-            var thumbnailCache = new System.Collections.Concurrent.ConcurrentDictionary<int, MagickImage>();
+            var thumbnailCache = new System.Collections.Concurrent.ConcurrentDictionary<int, MagickImage?>();
             var grayscaleThumbCache = new System.Collections.Concurrent.ConcurrentDictionary<int, float[]>();
 
             // Profiling counters (ticks measured via Stopwatch.GetTimestamp)
@@ -543,10 +568,10 @@ namespace DupFree.Services
             // repeated image loads. Use a persistent cache in %LOCALAPPDATA%/DupFree/thumbcache
             // keyed by file path + last write/length so thumbnails survive across runs.
             var indicesToPreload = new System.Collections.Concurrent.ConcurrentDictionary<int, byte>();
-            foreach (var p in sortedCandidates)
+            foreach (var (i, j, hashDist) in sortedCandidates)
             {
-                indicesToPreload.TryAdd(p.i, 0);
-                indicesToPreload.TryAdd(p.j, 0);
+                indicesToPreload.TryAdd(i, 0);
+                indicesToPreload.TryAdd(j, 0);
             }
 
             var thumbCacheDir = GetThumbCacheDir();
@@ -558,7 +583,7 @@ namespace DupFree.Services
                     // try persistent cache first
                     if (TryLoadThumbnailFromDiskCache(path, thumbCacheDir, out var cached))
                     {
-                        thumbnailCache.TryAdd(idx, cached);
+                        thumbnailCache.TryAdd(idx, cached!);
                         // Also build grayscale float[] for GPU/SIMD SSIM even when loaded from disk cache
                         if (useSimdSsim || useGpuSsim)
                         {
@@ -579,8 +604,10 @@ namespace DupFree.Services
                     System.Threading.Interlocked.Add(ref imageLoadTicks, swEnd - swStart);
                     System.Threading.Interlocked.Increment(ref imageLoadCount);
 
-                    var geo = new MagickGeometry((uint)ssimThumbnailSize, (uint)ssimThumbnailSize);
-                    geo.IgnoreAspectRatio = false;
+                    var geo = new MagickGeometry((uint)ssimThumbnailSize, (uint)ssimThumbnailSize)
+                    {
+                        IgnoreAspectRatio = false
+                    };
                     img.Resize(geo);
                     img.Extent((uint)ssimThumbnailSize, (uint)ssimThumbnailSize, Gravity.Center, MagickColors.Black);
                     thumbnailCache.TryAdd(idx, img);
@@ -622,9 +649,9 @@ namespace DupFree.Services
                 {
                     sharedGs = new GpuSsim();
                     sharedGsReady = sharedGs.Init();
-                    Console.WriteLine($"SimilarImageService: shared GPU init = {sharedGsReady}");
+                    Log.Info($"SimilarImageService: shared GPU init = {sharedGsReady}");
                 }
-                catch (Exception ex) { Console.WriteLine($"SimilarImageService: GPU init exception: {ex.Message}"); sharedGsReady = false; }
+                catch (Exception ex) { Log.Error(ex); sharedGsReady = false; }
             }
 
             Parallel.ForEach(sortedCandidates, new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount, CancellationToken = ct }, pair =>
@@ -660,8 +687,10 @@ namespace DupFree.Services
                             var swEnd = System.Diagnostics.Stopwatch.GetTimestamp();
                             System.Threading.Interlocked.Add(ref imageLoadTicks, swEnd - swStart);
                             System.Threading.Interlocked.Increment(ref imageLoadCount);
-                            var geo = new MagickGeometry((uint)ssimThumbnailSize, (uint)ssimThumbnailSize);
-                            geo.IgnoreAspectRatio = false;
+                            var geo = new MagickGeometry((uint)ssimThumbnailSize, (uint)ssimThumbnailSize)
+                            {
+                                IgnoreAspectRatio = false
+                            };
                             img.Resize(geo);
                             img.Extent((uint)ssimThumbnailSize, (uint)ssimThumbnailSize, Gravity.Center, MagickColors.Black);
                             return img;
@@ -674,8 +703,10 @@ namespace DupFree.Services
                         try
                         {
                             var img = new MagickImage(sortedEntries[idx].path);
-                            var geo = new MagickGeometry((uint)ssimThumbnailSize, (uint)ssimThumbnailSize);
-                            geo.IgnoreAspectRatio = false;
+                            var geo = new MagickGeometry((uint)ssimThumbnailSize, (uint)ssimThumbnailSize)
+                            {
+                                IgnoreAspectRatio = false
+                            };
                             img.Resize(geo);
                             img.Extent((uint)ssimThumbnailSize, (uint)ssimThumbnailSize, Gravity.Center, MagickColors.Black);
                             return img;
@@ -819,20 +850,22 @@ namespace DupFree.Services
             // Cleanup thumbnails
             foreach (var thumb in thumbnailCache.Values)
             {
-                try { thumb.Dispose(); } catch { }
+                try { thumb?.Dispose(); } catch { }
             }
 
             // Materialize scores list for later use (debugging / closest pairs)
             var allScores = allScoresBag.ToList();
-            allScores = allScores.OrderByDescending(s => s.ssim).ToList();
+            allScores = [.. allScores.OrderByDescending(s => s.ssim)];
 
             // If requested, export per-candidate detailed CSV with SSIM and component scores
             if (!string.IsNullOrEmpty(exportEdgeCsv))
             {
                 try
                 {
-                    var csvLines = new System.Collections.Generic.List<string>();
-                    csvLines.Add("ssim,hashSim,histSim,compSim,composite,pathA,pathB");
+                    var csvLines = new System.Collections.Generic.List<string>
+                    {
+                        "ssim,hashSim,histSim,compSim,composite,pathA,pathB"
+                    };
                     foreach (var s in allScores)
                     {
                         int a = s.a, b = s.b;
@@ -884,14 +917,17 @@ namespace DupFree.Services
             var parent = new int[n];
             var compSize = new int[n];
             for (int i = 0; i < n; i++) { parent[i] = i; compSize[i] = 1; }
-            Func<int,int> find = null;
-            find = x => parent[x] == x ? x : (parent[x] = find(parent[x]));
-            Action<int,int> unite = (a, b) => {
+            int find(int x) => parent[x] == x ? x : (parent[x] = find(parent[x]));
+            void unite(int a, int b)
+            {
                 a = find(a); b = find(b);
                 if (a == b) return;
-                if (compSize[a] < compSize[b]) { var t = a; a = b; b = t; }
+                if (compSize[a] < compSize[b])
+                {
+                    (b, a) = (a, b);
+                }
                 parent[b] = a; compSize[a] += compSize[b];
-            };
+            }
 
             // Stream groups as edges are accepted: union-find with live group tracking
             var liveGroupByRoot = new Dictionary<int, SimilarImageGroup>();
@@ -945,53 +981,57 @@ namespace DupFree.Services
                         var group = new SimilarImageGroup
                         {
                             GroupId = $"group_{results.Count}",
-                            Images = newMembers.Select(mi => CreateFileItem(sortedEntries[mi].path)).ToList(),
+                            Images = [.. newMembers.Select(mi => CreateFileItem(sortedEntries[mi].path))],
                             SimilarityScore = bestSsim
                         };
                         liveGroupByRoot[rnew] = group;
                         results.Add(group);
-                            RaiseGroupFound(group);
+                        RaiseGroupFound(group);
                     }
                 }
                 else if (gA != null && gB == null)
                 {
                     // add B members to A's group
-                    var added = membersB.Where(x => !gA.Images.Any(img => img.FilePath == sortedEntries[x].path)).ToList();
+                    var gA_nonnull = gA;
+                    var added = membersB.Where(x => !gA_nonnull.Images.Any(img => img.FilePath == sortedEntries[x].path)).ToList();
                     foreach (var idx in added)
                     {
                         var item = CreateFileItem(sortedEntries[idx].path);
-                        gA.Images.Add(item);
-                        RaiseImageAddedToGroup(gA.GroupId, item);
+                        gA_nonnull.Images.Add(item);
+                        RaiseImageAddedToGroup(gA_nonnull.GroupId, item);
                     }
                     liveGroupByRoot.Remove(ra);
-                    liveGroupByRoot[rnew] = gA;
+                    liveGroupByRoot[rnew] = gA_nonnull;
                 }
                 else if (gA == null && gB != null)
                 {
-                    var added = membersA.Where(x => !gB.Images.Any(img => img.FilePath == sortedEntries[x].path)).ToList();
+                    var gB_nonnull = gB;
+                    var added = membersA.Where(x => !gB_nonnull.Images.Any(img => img.FilePath == sortedEntries[x].path)).ToList();
                     foreach (var idx in added)
                     {
                         var item = CreateFileItem(sortedEntries[idx].path);
-                        gB.Images.Add(item);
-                        RaiseImageAddedToGroup(gB.GroupId, item);
+                        gB_nonnull.Images.Add(item);
+                        RaiseImageAddedToGroup(gB_nonnull.GroupId, item);
                     }
                     liveGroupByRoot.Remove(rb);
-                    liveGroupByRoot[rnew] = gB;
+                    liveGroupByRoot[rnew] = gB_nonnull;
                 }
                 else
                 {
                     // both groups exist: merge gB into gA
-                    foreach (var img in gB.Images)
+                    var gA_nonnull = gA!;
+                    var gB_nonnull = gB!;
+                    foreach (var img in gB_nonnull.Images)
                     {
-                        if (!gA.Images.Any(x => x.FilePath == img.FilePath))
+                        if (!gA_nonnull.Images.Any(x => x.FilePath == img.FilePath))
                         {
-                            gA.Images.Add(img);
-                            RaiseImageAddedToGroup(gA.GroupId, img);
+                            gA_nonnull.Images.Add(img);
+                            RaiseImageAddedToGroup(gA_nonnull.GroupId, img);
                         }
                     }
                     liveGroupByRoot.Remove(rb);
                     liveGroupByRoot.Remove(ra);
-                    liveGroupByRoot[rnew] = gA;
+                    liveGroupByRoot[rnew] = gA_nonnull;
                 }
             }
 
@@ -1028,17 +1068,17 @@ namespace DupFree.Services
                     .ToList();
 
                 int gi = 0;
-                foreach (var s in closest)
+                foreach (var (ssim, a, b) in closest)
                 {
                     results.Add(new SimilarImageGroup
                     {
                         GroupId = $"pair_{gi++}",
-                        Images = new List<FileItemViewModel>
-                        {
-                            CreateFileItem(sortedEntries[s.a].path),
-                            CreateFileItem(sortedEntries[s.b].path)
-                        },
-                        SimilarityScore = s.ssim
+                        Images =
+                        [
+                            CreateFileItem(sortedEntries[a].path),
+                            CreateFileItem(sortedEntries[b].path)
+                        ],
+                        SimilarityScore = ssim
                     });
                 }
                 return results;
@@ -1046,18 +1086,16 @@ namespace DupFree.Services
 
             RaiseStatus($"Done! Found {results.Count} groups");
             RaiseProgress(100);
-            
+
             return results;
         }
 
-        private (byte[] hash, ulong packed) GetImageHash(string filePath)
+        private (byte[]? hash, ulong packed) GetImageHash(string filePath)
         {
             try
             {
-                using (var image = Image.FromFile(filePath))
-                {
-                    return ComputePerceptualHash(image);
-                }
+                using var image = Image.FromFile(filePath);
+                return ComputePerceptualHash(image);
             }
             catch
             {
@@ -1067,32 +1105,30 @@ namespace DupFree.Services
 
         private (byte[] hash, ulong packed) ComputePerceptualHash(Image image)
         {
-            using (var resized = new Bitmap(image, new Size(64, 64)))
-            {
-                var grayscale = ToGrayscale(resized);
-                var hash = new byte[64];
-                ulong packed = 0UL;
-                int hashIndex = 0;
+            using var resized = new Bitmap(image, new Size(64, 64));
+            var grayscale = ToGrayscale(resized);
+            var hash = new byte[64];
+            ulong packed = 0UL;
+            int hashIndex = 0;
 
-                for (int y = 0; y < 64; y++)
+            for (int y = 0; y < 64; y++)
+            {
+                for (int x = 0; x < 64; x++)
                 {
-                    for (int x = 0; x < 64; x++)
+                    if (hashIndex < 64 && x < 63)
                     {
-                        if (hashIndex < 64 && x < 63)
-                        {
-                            int current = grayscale[y * 64 + x];
-                            int next = grayscale[y * 64 + (x + 1)];
-                            byte bit = (byte)(current < next ? 1 : 0);
-                            hash[hashIndex] = bit;
-                            if (bit != 0)
-                                packed |= (1UL << hashIndex);
-                            hashIndex++;
-                        }
+                        int current = grayscale[y * 64 + x];
+                        int next = grayscale[y * 64 + (x + 1)];
+                        byte bit = (byte)(current < next ? 1 : 0);
+                        hash[hashIndex] = bit;
+                        if (bit != 0)
+                            packed |= (1UL << hashIndex);
+                        hashIndex++;
                     }
                 }
-
-                return (hash, packed);
             }
+
+            return (hash, packed);
         }
 
         private int[] ToGrayscale(Bitmap bitmap)
@@ -1139,7 +1175,7 @@ namespace DupFree.Services
             return diff;
         }
 
-        private float[] ComputeColorHistogram(string filePath)
+        private float[]? ComputeColorHistogram(string filePath)
         {
             const int binsPerChannel = 4; // 4x4x4 = 64-bin histogram
             int totalBins = binsPerChannel * binsPerChannel * binsPerChannel;
@@ -1176,7 +1212,7 @@ namespace DupFree.Services
             return hist;
         }
 
-        private float[] ComputeSpatialHistogram(string filePath)
+        private float[]? ComputeSpatialHistogram(string filePath)
         {
             const int grid = 3;
             const int binsPerChannel = 4; // 4x4x4 per cell
@@ -1221,7 +1257,7 @@ namespace DupFree.Services
             return hist;
         }
 
-        private double SpatialHistogramDistance(float[] a, float[] b)
+        private double SpatialHistogramDistance(float[]? a, float[]? b)
         {
             if (a == null || b == null) return double.MaxValue;
             if (a.Length != b.Length) return double.MaxValue;
@@ -1232,7 +1268,7 @@ namespace DupFree.Services
             return sum / 2.0;
         }
 
-        private double HistogramDistance(float[] a, float[] b)
+        private double HistogramDistance(float[]? a, float[]? b)
         {
             if (a == null || b == null) return double.MaxValue;
             if (a.Length != b.Length) return double.MaxValue;
@@ -1257,54 +1293,52 @@ namespace DupFree.Services
             }
         }
 
-        private float[] CreateGrayscaleThumbnailFloats(string path, int size)
+        private float[]? CreateGrayscaleThumbnailFloats(string path, int size)
         {
             try
             {
-                using (var img = Image.FromFile(path))
+                using var img = Image.FromFile(path);
+                var bmp = new Bitmap(size, size);
+                using (var g = Graphics.FromImage(bmp))
                 {
-                    var bmp = new Bitmap(size, size);
-                    using (var g = Graphics.FromImage(bmp))
-                    {
-                        g.Clear(System.Drawing.Color.Black);
-                        // preserve aspect ratio
-                        double srcW = img.Width;
-                        double srcH = img.Height;
-                        double scale = Math.Min((double)size / srcW, (double)size / srcH);
-                        int tw = Math.Max(1, (int)Math.Round(srcW * scale));
-                        int th = Math.Max(1, (int)Math.Round(srcH * scale));
-                        int x = (size - tw) / 2;
-                        int y = (size - th) / 2;
-                        g.DrawImage(img, new Rectangle(x, y, tw, th), new Rectangle(0, 0, (int)srcW, (int)srcH), GraphicsUnit.Pixel);
-                    }
+                    g.Clear(System.Drawing.Color.Black);
+                    // preserve aspect ratio
+                    double srcW = img.Width;
+                    double srcH = img.Height;
+                    double scale = Math.Min((double)size / srcW, (double)size / srcH);
+                    int tw = Math.Max(1, (int)Math.Round(srcW * scale));
+                    int th = Math.Max(1, (int)Math.Round(srcH * scale));
+                    int x = (size - tw) / 2;
+                    int y = (size - th) / 2;
+                    g.DrawImage(img, new Rectangle(x, y, tw, th), new Rectangle(0, 0, (int)srcW, (int)srcH), GraphicsUnit.Pixel);
+                }
 
-                    var lockBits = bmp.LockBits(new System.Drawing.Rectangle(0, 0, bmp.Width, bmp.Height), System.Drawing.Imaging.ImageLockMode.ReadOnly, System.Drawing.Imaging.PixelFormat.Format24bppRgb);
-                    try
+                var lockBits = bmp.LockBits(new System.Drawing.Rectangle(0, 0, bmp.Width, bmp.Height), System.Drawing.Imaging.ImageLockMode.ReadOnly, System.Drawing.Imaging.PixelFormat.Format24bppRgb);
+                try
+                {
+                    int stride = lockBits.Stride;
+                    int h = bmp.Height;
+                    int w = bmp.Width;
+                    byte[] pixels = new byte[stride * h];
+                    System.Runtime.InteropServices.Marshal.Copy(lockBits.Scan0, pixels, 0, pixels.Length);
+                    var floats = new float[w * h];
+                    for (int yy = 0; yy < h; yy++)
                     {
-                        int stride = lockBits.Stride;
-                        int h = bmp.Height;
-                        int w = bmp.Width;
-                        byte[] pixels = new byte[stride * h];
-                        System.Runtime.InteropServices.Marshal.Copy(lockBits.Scan0, pixels, 0, pixels.Length);
-                        var floats = new float[w * h];
-                        for (int yy = 0; yy < h; yy++)
+                        for (int xx = 0; xx < w; xx++)
                         {
-                            for (int xx = 0; xx < w; xx++)
-                            {
-                                int idx = yy * stride + xx * 3;
-                                byte b = pixels[idx];
-                                byte g = pixels[idx + 1];
-                                byte r = pixels[idx + 2];
-                                floats[yy * w + xx] = (r + g + b) / 3.0f;
-                            }
+                            int idx = yy * stride + xx * 3;
+                            byte b = pixels[idx];
+                            byte g = pixels[idx + 1];
+                            byte r = pixels[idx + 2];
+                            floats[yy * w + xx] = (r + g + b) / 3.0f;
                         }
-                        return floats;
                     }
-                    finally
-                    {
-                        bmp.UnlockBits(lockBits);
-                        bmp.Dispose();
-                    }
+                    return floats;
+                }
+                finally
+                {
+                    bmp.UnlockBits(lockBits);
+                    bmp.Dispose();
                 }
             }
             catch { return null; }
@@ -1318,10 +1352,10 @@ namespace DupFree.Services
 
             // compute means
             double sumA = 0.0, sumB = 0.0;
-            int i = 0;
             int vecSize = Vector<float>.Count;
             var vSumA = Vector<float>.Zero;
             var vSumB = Vector<float>.Zero;
+            int i;
             for (i = 0; i + vecSize <= n; i += vecSize)
             {
                 var va = new Vector<float>(a, i);
@@ -1340,7 +1374,6 @@ namespace DupFree.Services
 
             // compute variances and covariance
             double varA = 0.0, varB = 0.0, cov = 0.0;
-            i = 0;
             var vVarA = Vector<float>.Zero;
             var vVarB = Vector<float>.Zero;
             var vCov = Vector<float>.Zero;
@@ -1403,22 +1436,20 @@ namespace DupFree.Services
             }
         }
 
-        private bool TryLoadThumbnailFromDiskCache(string sourcePath, string cacheDir, out MagickImage image)
+        private bool TryLoadThumbnailFromDiskCache(string sourcePath, string cacheDir, out MagickImage? image)
         {
             image = null;
             try
             {
                 var fi = new FileInfo(sourcePath);
                 string key = $"{sourcePath}|{fi.Length}|{fi.LastWriteTimeUtc.Ticks}";
-                using (var md5 = MD5.Create())
-                {
-                    var hash = md5.ComputeHash(Encoding.UTF8.GetBytes(key));
-                    var name = BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant() + ".png";
-                    var path = Path.Combine(cacheDir, name);
-                    if (!File.Exists(path)) return false;
-                    image = new MagickImage(path);
-                    return true;
-                }
+                using var md5 = MD5.Create();
+                var hash = md5.ComputeHash(Encoding.UTF8.GetBytes(key));
+                var name = BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant() + ".png";
+                var path = Path.Combine(cacheDir, name);
+                if (!File.Exists(path)) return false;
+                image = new MagickImage(path);
+                return true;
             }
             catch
             {
@@ -1433,18 +1464,14 @@ namespace DupFree.Services
             {
                 var fi = new FileInfo(sourcePath);
                 string key = $"{sourcePath}|{fi.Length}|{fi.LastWriteTimeUtc.Ticks}";
-                using (var md5 = MD5.Create())
-                {
-                    var hash = md5.ComputeHash(Encoding.UTF8.GetBytes(key));
-                    var name = BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant() + ".png";
-                    var path = Path.Combine(cacheDir, name);
-                    // clone before writing in case caller continues to use the image
-                    using (var clone = image.Clone())
-                    {
-                        clone.Format = MagickFormat.Png;
-                        clone.Write(path);
-                    }
-                }
+                using var md5 = MD5.Create();
+                var hash = md5.ComputeHash(Encoding.UTF8.GetBytes(key));
+                var name = BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant() + ".png";
+                var path = Path.Combine(cacheDir, name);
+                // clone before writing in case caller continues to use the image
+                using var clone = image.Clone();
+                clone.Format = MagickFormat.Png;
+                clone.Write(path);
             }
             catch { }
         }

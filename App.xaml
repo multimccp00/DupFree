@@ -89,6 +89,15 @@
             </Setter>
         </Style>
 
+        <!-- global window DPI layout rounding and base appearance -->
+        <Style TargetType="Window">
+            <Setter Property="UseLayoutRounding" Value="True" />
+            <Setter Property="SnapsToDevicePixels" Value="True" />
+            <Setter Property="Background" Value="{DynamicResource AppBackground}" />
+            <Setter Property="Foreground" Value="{DynamicResource WindowForeground}" />
+            <Setter Property="TextElement.Foreground" Value="{DynamicResource WindowForeground}" />
+        </Style>
+
         <Style x:Key="SuccessButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
             <Setter Property="Background" Value="#0F8F6A" />
             <Setter Property="Foreground" Value="White" />
@@ -371,11 +380,5 @@
             </Setter>
         </Style>
 
-        <!-- Window styling -->
-        <Style TargetType="Window">
-            <Setter Property="Background" Value="{DynamicResource AppBackground}" />
-            <Setter Property="Foreground" Value="{DynamicResource WindowForeground}" />
-            <Setter Property="TextElement.Foreground" Value="{DynamicResource WindowForeground}" />
-        </Style>
     </Application.Resources>
 </Application>

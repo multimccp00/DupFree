@@ -19,33 +19,33 @@ class Program
             }
             if (!File.Exists(dllPath))
             {
-                Console.Error.WriteLine("Could not find DupFree.dll at: " + dllPath);
+                Log.Error("Could not find DupFree.dll at: " + dllPath);
                 return 2;
             }
             var asm = Assembly.LoadFrom(dllPath);
             var t = asm.GetType("DupFree.Services.SimilarImageService");
             if (t == null)
             {
-                Console.Error.WriteLine("Type DupFree.Services.SimilarImageService not found in assembly.");
+                Log.Error("Type DupFree.Services.SimilarImageService not found in assembly.");
                 return 3;
             }
             var method = t.GetMethod("TryEnableOpenCL", BindingFlags.Public | BindingFlags.Static);
             if (method == null)
             {
-                Console.Error.WriteLine("TryEnableOpenCL method not found.");
+                Log.Error("TryEnableOpenCL method not found.");
                 return 4;
             }
             var parameters = new object[] { null };
             var result = (bool)method.Invoke(null, parameters);
             var message = parameters[0] as string;
-            Console.WriteLine("TryEnableOpenCL returned: " + result);
-            Console.WriteLine("Message: " + message);
+            Log.Info("TryEnableOpenCL returned: " + result);
+            Log.Info("Message: " + message);
 
             // Also check Windows registry for OpenCL ICD vendors (common on Windows).
             try
             {
-                Console.WriteLine();
-                Console.WriteLine("Checking registry for OpenCL ICD vendors...");
+                Log.Info(string.Empty);
+                Log.Info("Checking registry for OpenCL ICD vendors...");
                 var vendorKeys = new[] {
                     @"HKEY_LOCAL_MACHINE\SOFTWARE\Khronos\OpenCL\Vendors",
                     @"HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node\Khronos\OpenCL\Vendors"
@@ -58,21 +58,21 @@ class Program
                     foreach (var name in key.GetValueNames())
                     {
                         var val = key.GetValue(name)?.ToString();
-                        Console.WriteLine($"Vendor: {name} => {val}");
+                        Log.Info($"Vendor: {name} => {val}");
                         found = true;
                     }
                 }
-                if (!found) Console.WriteLine("No OpenCL ICD vendors found in registry.");
+                if (!found) Log.Info("No OpenCL ICD vendors found in registry.");
             }
             catch (Exception ex)
             {
-                Console.WriteLine("Registry check failed: " + ex.Message);
+                Log.Error("Registry check failed: " + ex.Message);
             }
             return 0;
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine("Error: " + ex);
+            Log.Error(ex);
             return 1;
         }
     }

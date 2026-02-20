@@ -8,4 +8,5 @@
       </requestedPrivileges>
     </security>
   </trustInfo>
+  <!-- no dpiAware element - keeps manifest compatible with older OS versions -->
 </asmv1:assembly>
