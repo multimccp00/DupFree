@@ -61,6 +61,12 @@ Or open `Dupfree.sln` in Visual Studio 2022 and press F5.
 
 ### Logging
 
+### Telemetry & performance
+
+The application can optionally collect **anonymous** timing statistics and usage events to help the developer identify slow code paths. No paths, file names or other personal information are recorded – only high‑level event names and durations are written. Telemetry is **off by default** and may be enabled from the Settings panel under "Performance & telemetry". When enabled entries appear in the normal log file (prefix `TELEMETRY:` or `TELEMETRY_METRIC:`).
+
+
+
 ### Error handling
 
 If the application encounters an unhandled exception (UI thread, background
@@ -70,6 +76,49 @@ The dialog shows the path to the log file and offers **Copy Log** and **Open
 Log** buttons for easy reporting.  This ensures problems are visible even if
 beginning of the process never had a window.
 
+
+### Code signing
+
+The executable produced by this project can be signed with `signtool.exe` so
+that Windows and Defender have fewer reasons to display warnings. Signing
+requires a certificate that can be either a genuine code‑signing certificate
+issued by a trusted Certificate Authority or a self‑signed certificate created
+on your own machine. A CA certificate costs money, and only those certificates
+will make your binary *trusted* by other machines. If your goal is simply to
+stop Defender complaining locally while developing you can do the latter.
+
+To create a temporary self‑signed certificate and export a PFX file run in
+PowerShell (administrator not required):
+
+```powershell
+$cert = New-SelfSignedCertificate -DnsName "DupFree" -Type CodeSigningCert \
+    -CertStoreLocation "Cert:\CurrentUser\My"
+$pwd = ConvertTo-SecureString -String "password" -Force -AsPlainText
+Export-PfxCertificate -Cert $cert -FilePath "code-sign.pfx" -Password $pwd
+```
+
+You can then sign the built EXE manually or by passing the PFX path to MSBuild
+using the `CodeSigningCertificate` and `CodeSigningPassword` properties, e.g.: 
+
+```cmd
+msbuild /p:Configuration=Release /p:CodeSigningCertificate=code-sign.pfx \
+        /p:CodeSigningPassword=password
+```
+
+The project file already includes a `SignExe` target that invokes `signtool`
+if `CodeSigningCertificate` is defined; you don't have to edit it. The script
+above places the certificate in the current directory so the build knows where
+to find it. Self-signed binaries will still show a warning on other PCs,
+however the certificate proves that the executable hasn't been tampered with.
+
+When you publish through the Microsoft Store the package is re‑signed by
+Microsoft during the submission process, so you don't need to supply a
+certificate at all – simply uploading the app and letting the Store sign it is
+a common strategy for free/open source projects.
+
+After building and signing the installer or exe you can submit it to Microsoft
+for Defender "whitelisting"; they typically require enough time for their
+systems to learn that the new binary is benign before warnings stop appearing.
 
 ### DPI & Scaling
 

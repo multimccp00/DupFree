@@ -2785,6 +2785,9 @@ namespace DupFree.Views
             if (ShowScanTimerCheckBox != null)
                 ShowScanTimerCheckBox.IsChecked = SettingsService.GetShowScanTimer();
 
+            if (EnableTelemetryCheckBox != null)
+                EnableTelemetryCheckBox.IsChecked = SettingsService.GetEnableTelemetry();
+
             if (RecycleBinSizeTextBox != null)
                 RecycleBinSizeTextBox.Text = SettingsService.MaxRecycleBinSize.ToString();
         }
@@ -3434,6 +3437,31 @@ namespace DupFree.Views
                 SettingsService.SetShowScanTimer(showTimer);
                 SettingsService.SaveToFile();
                 MessageBox.Show(showTimer ? "Scan timer enabled. It will display during similar-image scans." : "Scan timer disabled.",
+                    "Settings Saved", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Error saving setting: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        private void EnableTelemetryCheckBox_Changed(object sender, RoutedEventArgs e)
+        {
+            if (EnableTelemetryCheckBox == null)
+                return;
+
+            SettingsService.SetEnableTelemetry(EnableTelemetryCheckBox.IsChecked == true);
+            SettingsService.SaveToFile();
+        }
+
+        private void SaveTelemetryButton_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                bool enabled = EnableTelemetryCheckBox.IsChecked ?? false;
+                SettingsService.SetEnableTelemetry(enabled);
+                SettingsService.SaveToFile();
+                MessageBox.Show(enabled ? "Telemetry enabled. Anonymous performance data will be logged." : "Telemetry disabled.",
                     "Settings Saved", MessageBoxButton.OK, MessageBoxImage.Information);
             }
             catch (Exception ex)

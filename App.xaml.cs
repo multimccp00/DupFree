@@ -30,6 +30,10 @@ namespace DupFree
             // Load settings from file
             Services.SettingsService.LoadFromFile();
 
+            // if telemetry is enabled, note that the application started
+            if (Services.SettingsService.EnableTelemetry)
+                Services.TelemetryService.TrackEvent("AppStart");
+
             // Global exception handlers to capture crashes (writes to temp file)
             AppDomain.CurrentDomain.UnhandledException += (s, ev) =>
             {

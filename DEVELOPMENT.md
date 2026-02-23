@@ -186,3 +186,5 @@ Global exception handlers write crash details to:
 - `DuplicateSearchService` writes diagnostic logs to file during scanning
 - Use `System.Diagnostics.Debug.WriteLine` statements (visible in VS Debug Output)
 - Enable the scan timer in Settings to see elapsed time for similar image scans
+- **Telemetry**: optional anonymous timing/metric events are logged when the corresponding setting is enabled. Look for `TELEMETRY:` entries in the normal log file.
+

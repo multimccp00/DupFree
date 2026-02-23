@@ -126,9 +126,13 @@ namespace DupFree.Services
             bool useSimdSsim = false,
             bool useGpuSsim = false)
         {
-            return await Task.Run(() =>
-                FindSimilarInternal(directories, maxDistance, showClosestPairsOnly, closestPairCount, progress, cancellationToken, exportEdgeCsv, hashThresholdOverride, ssimThumbnailSize, visipicsMode: visipicsMode, forceBruteForce: forceBruteForce, safeOptimizations: false, useSimdSsim: useSimdSsim, useGpuSsim: useGpuSsim),
-                cancellationToken);
+            TelemetryService.TrackEvent("SimilarImageScanStart");
+            using (TelemetryService.Measure("SimilarImageScan"))
+            {
+                return await Task.Run(() =>
+                    FindSimilarInternal(directories, maxDistance, showClosestPairsOnly, closestPairCount, progress, cancellationToken, exportEdgeCsv, hashThresholdOverride, ssimThumbnailSize, visipicsMode: visipicsMode, forceBruteForce: forceBruteForce, safeOptimizations: false, useSimdSsim: useSimdSsim, useGpuSsim: useGpuSsim),
+                    cancellationToken);
+            }
         }
 
         private List<SimilarImageGroup> FindSimilarInternal(
@@ -1055,6 +1059,13 @@ namespace DupFree.Services
                 double imgLoadMs = (double)System.Threading.Interlocked.Read(ref imageLoadTicks) * 1000.0 / tickFreq;
                 long imgLoadCount = System.Threading.Interlocked.Read(ref imageLoadCount);
                 RaiseStatus($"Profile: SSIM compares={ssimCount}, SSIM ms={ssimMs:F1}, image loads={imgLoadCount}, image load ms={imgLoadMs:F1}");
+                if (TelemetryService.Enabled)
+                {
+                    TelemetryService.TrackMetric("SSIMms", ssimMs);
+                    TelemetryService.TrackMetric("SSIMCount", ssimCount);
+                    TelemetryService.TrackMetric("ImageLoadMs", imgLoadMs);
+                    TelemetryService.TrackMetric("ImageLoadCount", imgLoadCount);
+                }
             }
             catch { }
 

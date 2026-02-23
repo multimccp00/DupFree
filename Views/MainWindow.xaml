@@ -486,6 +486,21 @@
                                     </StackPanel>
                                 </Border>
 
+                                <!-- Telemetry Section -->
+                                <Border Background="{DynamicResource CardBackground}" CornerRadius="8" Padding="20" Margin="0,0,0,16">
+                                    <StackPanel>
+                                        <TextBlock Text="Performance &amp; telemetry" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,12" />
+                                        <TextBlock Text="Optionally collect anonymous performance data and timing statistics. Data is written to the normal log file with no paths or personal information." Foreground="{DynamicResource MutedForeground}" Margin="0,0,0,16" TextWrapping="Wrap" />
+
+                                        <CheckBox Name="EnableTelemetryCheckBox" Content="Enable anonymous telemetry" Margin="0,0,0,16"
+                                                  Style="{StaticResource SettingsCheckBox}" VerticalAlignment="Center" Checked="EnableTelemetryCheckBox_Changed" Unchecked="EnableTelemetryCheckBox_Changed" />
+
+                                        <Button Name="SaveTelemetryButton" Click="SaveTelemetryButton_Click" Style="{StaticResource PrimaryButton}" Padding="16,10" HorizontalAlignment="Left">
+                                            Apply Setting
+                                        </Button>
+                                    </StackPanel>
+                                </Border>
+
                                 <!-- Reset all settings to their default values -->
                                 <Button Name="ResetSettingsButton" Click="ResetSettingsButton_Click" Style="{StaticResource PrimaryButton}" Margin="0,8,0,24" Padding="16,10" HorizontalAlignment="Left">
                                     {x:Static properties:Resources.ResetToDefaults}

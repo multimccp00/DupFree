@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using DupFree.Services;
 
 namespace DupFree.Services
 {
@@ -39,7 +40,17 @@ namespace DupFree.Services
         /// <returns>List of duplicate file groups.</returns>
         public async Task<List<DuplicateFileGroup>> FindDuplicatesAsync(List<string> directories, IProgress<(int current, int total)>? progress = null, int? maxFilesToProcess = null, CancellationToken cancellationToken = default)
         {
-            return await Task.Run(() => FindDuplicatesInternal(directories, progress, maxFilesToProcess, cancellationToken), cancellationToken);
+            TelemetryService.TrackEvent("DuplicateSearchStart");
+            using (TelemetryService.Measure("DuplicateSearch"))
+            {
+                var result = await Task.Run(() => FindDuplicatesInternal(directories, progress, maxFilesToProcess, cancellationToken), cancellationToken);
+                if (TelemetryService.Enabled)
+                {
+                    TelemetryService.TrackMetric("FilesScanned", TotalFilesScanned);
+                    TelemetryService.TrackMetric("DuplicateGroups", _duplicates.Count);
+                }
+                return result;
+            }
         }
 
         private List<DuplicateFileGroup> FindDuplicatesInternal(List<string> directories, IProgress<(int current, int total)>? progress = null, int? maxFilesToProcess = null, CancellationToken cancellationToken = default)

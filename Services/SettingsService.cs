@@ -45,6 +45,8 @@ namespace DupFree.Services
         public static bool AutoSelectKeepLargerFilesize { get; private set; } = false;
         // Debug timer display for similar images scan
         public static bool ShowScanTimer { get; private set; } = false;
+        // Optional telemetry & timing statistics (anonymous, recorded in log when enabled)
+        public static bool EnableTelemetry { get; private set; } = false;
 
         // Maximum number of items to keep in the recycle bin
         public static int MaxRecycleBinSize { get; private set; } = 30;
@@ -67,6 +69,7 @@ namespace DupFree.Services
             AutoSelectKeepHigherResolution = true;
             AutoSelectKeepLargerFilesize = false;
             ShowScanTimer = false;
+            EnableTelemetry = false;
             MaxRecycleBinSize = 30;
             OnSettingsChanged?.Invoke();
             SaveToFile();
@@ -161,6 +164,16 @@ namespace DupFree.Services
             SaveToFile();
         }
 
+        /// <summary>Enable or disable anonymous telemetry/timing statistics.</summary>
+        public static void SetEnableTelemetry(bool enable)
+        {
+            EnableTelemetry = enable;
+            OnSettingsChanged?.Invoke();
+            SaveToFile();
+        }
+
+        public static bool GetEnableTelemetry() => EnableTelemetry;
+
         public static void SetMaxRecycleBinSize(int size)
         {
             MaxRecycleBinSize = Math.Max(0, size);
@@ -202,6 +215,7 @@ namespace DupFree.Services
                     AutoSelectKeepHigherResolution,
                     AutoSelectKeepLargerFilesize,
                     ShowScanTimer,
+                    EnableTelemetry,
                     MaxRecycleBinSize,
 
                 };
@@ -263,6 +277,9 @@ namespace DupFree.Services
 
                 if (root.TryGetProperty("ShowScanTimer", out var showTimer))
                     ShowScanTimer = showTimer.GetBoolean();
+
+                if (root.TryGetProperty("EnableTelemetry", out var telemetry))
+                    EnableTelemetry = telemetry.GetBoolean();
 
                 if (root.TryGetProperty("MaxRecycleBinSize", out var maxBinSize))
                     MaxRecycleBinSize = Math.Max(0, maxBinSize.GetInt32());
