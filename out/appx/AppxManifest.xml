@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10" xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10" xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities" IgnorableNamespaces="uap rescap">
+  <Identity Name="com.dupfree.app" Publisher="CN=DupFreePublisher" Version="1.0.0.0" />
+  <Properties>
+    <DisplayName>DupFree</DisplayName>
+    <PublisherDisplayName>DupFreePublisher</PublisherDisplayName>
+    <Description>DupFree: find and remove duplicate files</Description>
+    <Logo>Assets\dupfree_logo.png</Logo>
+  </Properties>
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Universal" MinVersion="10.0.19041.0" MaxVersionTested="10.0.22621.0" />
+  </Dependencies>
+  <Resources>
+    <Resource Language="en-US"/>
+  </Resources>
+  <Capabilities>
+    <rescap:Capability Name="runFullTrust"/>
+  </Capabilities>
+  <Applications>
+    <Application Id="App" Executable="DupFree.exe" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements DisplayName="DupFree" Square150x150Logo="Assets\dupfree_logo.png" Square44x44Logo="Assets\dupfree_logo.png" Description="Utility to find duplicate files" BackgroundColor="transparent">
+        <uap:DefaultTile Wide310x150Logo="Assets\dupfree_logo.png" />
+      </uap:VisualElements>
+    </Application>
+  </Applications>
+</Package>
