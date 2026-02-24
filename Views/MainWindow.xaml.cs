@@ -3021,22 +3021,47 @@ namespace DupFree.Views
                 }
             }
 
+            // remember a position to reselect after deletion
+            int keepIndex = -1;
+            if (ResultsDataGrid != null && ResultsDataGrid.SelectedIndex >= 0)
+            {
+                keepIndex = ResultsDataGrid.SelectedIndex;
+            }
+            else if (ResultsListView != null && ResultsListView.SelectedIndex >= 0)
+            {
+                keepIndex = ResultsListView.SelectedIndex;
+            }
+
             foreach (var file in toDelete.ToList())
             {
                 await DeleteFileAsync(file, skipConfirm: true);
             }
 
-            // Clear all selections after deletion to avoid stale selection state
+            // Clear existing selections
             _selectedGridItems.Clear();
             if (ResultsDataGrid != null)
             {
                 ResultsDataGrid.SelectedItems.Clear();
-                ResultsDataGrid.SelectedIndex = -1;
+                if (keepIndex >= 0 && keepIndex < ResultsDataGrid.Items.Count)
+                {
+                    ResultsDataGrid.SelectedIndex = keepIndex;
+                }
+                else
+                {
+                    ResultsDataGrid.SelectedIndex = -1;
+                }
             }
             if (ResultsListView != null)
             {
                 ResultsListView.SelectedItems.Clear();
-                ResultsListView.SelectedIndex = -1;
+                if (keepIndex >= 0 && keepIndex < ResultsListView.Items.Count)
+                {
+                    ResultsListView.SelectedIndex = keepIndex;
+                }
+                else
+                {
+                    ResultsListView.SelectedIndex = -1;
+                }
             }
             UpdateDeleteCount();
         }
