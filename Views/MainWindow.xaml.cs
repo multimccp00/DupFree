@@ -17,6 +17,7 @@ using System.ComponentModel;
 using System.Collections.Generic;
 using Microsoft.VisualBasic.FileIO;
 using Ookii.Dialogs.Wpf;
+using Microsoft.WindowsAPICodePack.Dialogs;
 using System.Runtime.InteropServices;
 using System.Windows.Interop;
 using System.Diagnostics;
@@ -472,41 +473,57 @@ namespace DupFree.Views
         [System.Runtime.Versioning.SupportedOSPlatform("windows")]
         public bool TrySelectDirectories(bool autoScan)
         {
-            var dialog = new VistaFolderBrowserDialog();
-            if (dialog.ShowDialog() == true)
+            // use the CommonOpenFileDialog from the Windows API Code Pack because
+            // it supports folder multiselect, which the Ookii/Vista dialog lacks.
+            var dialog = new Microsoft.WindowsAPICodePack.Dialogs.CommonOpenFileDialog
             {
-                string path = dialog.SelectedPath;
-                if (!DirectoryAccessAllowed(path))
-                {
-                    // styled warning using Ookii.TaskDialog so it matches the rest of the UI
-                    var td = new Ookii.Dialogs.Wpf.TaskDialog
-                    {
-                        WindowTitle = "Permission Denied",
-                        MainInstruction = "Cannot access the selected folder.",
-                        Content = "Please check your permissions and try a different location.",
-                        MainIcon = Ookii.Dialogs.Wpf.TaskDialogIcon.Warning
-                    };
-                    td.ShowDialog(this);
+                IsFolderPicker = true,
+                Multiselect = true,
+                EnsurePathExists = true,
+                AllowNonFileSystemItems = false
+            };
 
+            if (dialog.ShowDialog() == Microsoft.WindowsAPICodePack.Dialogs.CommonFileDialogResult.Ok)
+            {
+                var paths = dialog.FileNames?.ToArray() ?? Array.Empty<string>();
+                if (paths.Length == 0)
+                {
                     BrowseButton.IsChecked = false;
                     return false;
                 }
 
+                // ensure all selected directories are accessible
+                foreach (var p in paths)
+                {
+                    if (!DirectoryAccessAllowed(p))
+                    {
+                        var td = new Ookii.Dialogs.Wpf.TaskDialog
+                        {
+                            WindowTitle = "Permission Denied",
+                            MainInstruction = "Cannot access one or more selected folders.",
+                            Content = "Please check your permissions and try a different location.",
+                            MainIcon = Ookii.Dialogs.Wpf.TaskDialogIcon.Warning
+                        };
+                        td.ShowDialog(this);
+
+                        BrowseButton.IsChecked = false;
+                        return false;
+                    }
+                }
+
                 _selectedDirectories.Clear();
-                _selectedDirectories.Add(path);
+                _selectedDirectories.AddRange(paths);
                 ScanButton.IsEnabled = true;
-                StatusText.Text = $"Selected: {path}";
 
-                // Pass directories to similar images panel
+                if (_selectedDirectories.Count == 1)
+                    StatusText.Text = $"Selected: {_selectedDirectories[0]}";
+                else
+                    StatusText.Text = $"Selected: {string.Join("; ", _selectedDirectories)}";
+
                 SimilarImagesPanelControl.SetDirectories(_selectedDirectories);
-
-                // Update storage display for the selected drive
                 UpdateStorageIndicator();
-
-                // Uncheck the browse button after selection
                 BrowseButton.IsChecked = false;
 
-                // Auto-scan only the first time a folder is selected
                 if (autoScan && !_hasScannedOnce)
                 {
                     _hasScannedOnce = true;
@@ -738,6 +755,8 @@ namespace DupFree.Views
 
             try
             {
+                // base our display on the first selected directory; this keeps the
+                // indicator simple but adds a note when multiple folders are chosen.
                 var driveInfo = new System.IO.DriveInfo(_selectedDirectories[0]);
                 long used = driveInfo.TotalSize - driveInfo.AvailableFreeSpace;
                 double percentage = (double)used / driveInfo.TotalSize * 100;
@@ -760,9 +779,19 @@ namespace DupFree.Views
                 // Update storage text
                 var driveRoot = driveInfo.Name.TrimEnd('\\');
                 var volumeLabel = driveInfo.VolumeLabel;
-                StorageDriveText.Text = string.IsNullOrWhiteSpace(volumeLabel)
+                string driveDisplay = string.IsNullOrWhiteSpace(volumeLabel)
                     ? driveRoot
                     : $"{volumeLabel} ({driveRoot})";
+
+                if (_selectedDirectories.Count > 1)
+                {
+                    StorageDriveText.Text = driveDisplay + $" (+{_selectedDirectories.Count - 1} more)";
+                }
+                else
+                {
+                    StorageDriveText.Text = driveDisplay;
+                }
+
                 StorageText.Text = $"{FormatFileSize(used)} used of {FormatFileSize(driveInfo.TotalSize)}";
             }
             catch { }
@@ -2514,6 +2543,18 @@ namespace DupFree.Views
                 (failed > 0 ? $" ({failed} failed)" : "");
         }
 
+        private ScrollViewer? FindScrollViewer(DependencyObject d)
+        {
+            if (d is ScrollViewer sv) return sv;
+            for (int i = 0; i < VisualTreeHelper.GetChildrenCount(d); i++)
+            {
+                var child = VisualTreeHelper.GetChild(d, i);
+                var result = FindScrollViewer(child);
+                if (result != null) return result;
+            }
+            return null;
+        }
+
         private async Task DeleteFileAsync(FileItemViewModel file, bool skipConfirm = false)
         {
             try
@@ -2526,6 +2567,28 @@ namespace DupFree.Views
                 }
 
                 StatusText.Text = $"Deleting {file.FileName}...";
+
+                // capture current scroll offsets so we can restore them after the
+                // view refresh.  note that scrolling normally happens as part of
+                // selection restoration, but when deleting multiple items in a
+                // batch the repeated calls to DeleteFileAsync could walk the
+                // selection to the top; the offset ensures the user stays where
+                // they were looking.
+                double dataGridOffset = 0, listOffset = 0, gridOffset = 0;
+                if (ResultsDataGrid != null)
+                {
+                    if (FindScrollViewer(ResultsDataGrid) is ScrollViewer dgv)
+                        dataGridOffset = dgv.VerticalOffset;
+                }
+                if (ResultsListView != null)
+                {
+                    if (FindScrollViewer(ResultsListView) is ScrollViewer lv)
+                        listOffset = lv.VerticalOffset;
+                }
+                if (ResultsScrollViewer != null)
+                {
+                    gridOffset = ResultsScrollViewer.VerticalOffset;
+                }
 
                 // Add to recycle bin before deleting
                 AddToRecycleBin(file);
@@ -2582,6 +2645,25 @@ namespace DupFree.Views
                 if (ResultsListView != null) ResultsListView.ItemsSource = null;
                 DisplayResults();
                 UpdateFooterStats();
+
+                // restore scroll offsets after the view has been repopulated
+                _ = Dispatcher.BeginInvoke(() =>
+                {
+                    if (ResultsListView != null)
+                    {
+                        if (FindScrollViewer(ResultsListView) is ScrollViewer lv)
+                            lv.ScrollToVerticalOffset(listOffset);
+                    }
+                    if (ResultsDataGrid != null)
+                    {
+                        if (FindScrollViewer(ResultsDataGrid) is ScrollViewer dgv)
+                            dgv.ScrollToVerticalOffset(dataGridOffset);
+                    }
+                    if (ResultsScrollViewer != null)
+                    {
+                        ResultsScrollViewer.ScrollToVerticalOffset(gridOffset);
+                    }
+                }, System.Windows.Threading.DispatcherPriority.Loaded);
 
                 // For ListView, restore selection to next item (same index) or previous if at end
                 if (_currentViewMode == "list" && ResultsListView != null && ResultsListView.Visibility == Visibility.Visible)
