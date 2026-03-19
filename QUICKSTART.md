@@ -41,6 +41,7 @@ Or open `Dupfree.sln` in Visual Studio 2022 and press F5.
 ### 3. Review Results
 - **List view**: DataGrid with sortable columns (Name, Path, Size, Date)
 - **Grid view**: Thumbnail cards — toggle with the view button in the action bar
+- **Animated previews**: In grid view, GIF and video files auto-play when you hover over them, and loop seamlessly. They automatically pause when scrolled off-screen
 - Use the **search box** to filter results by filename
 - Footer cards show: Files Checked, Duplicates Found, Space Wasted, Space Saved
 

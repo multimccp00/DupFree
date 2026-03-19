@@ -52,6 +52,9 @@
 - **Dark title bar** via Windows DWM API
 - **Collapsible sidebar** with 6 panels: Browse, Duplicate Files, Similar Images, Recycle Bin, Settings, Help
 - **Two view modes**: List (DataGrid) and Grid (thumbnail cards)
+- **Animated media previews**: GIF frames and video thumbnails auto-play on hover in grid view, with seamless looping (MediaEnded loops video; DispatcherTimer drives GIF frame stepping)
+- **Viewport-aware playback**: `IsTileInViewport()` check via `TransformToAncestor` stops GIF/video when tile scrolls off-screen; `ScrollChangedEventHandler` per-tile ensures immediate stop on scroll
+- **LRU video eviction**: Max 6 concurrent video decoders; oldest is automatically stopped when a 7th starts (`_videoPreviewStoppers` list)
 - **Search/filter** by filename
 - **Footer statistics**: Files Checked, Duplicates, Space Wasted, Space Saved
 - **Storage drive indicator** with volume label and usage bar

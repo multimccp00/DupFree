@@ -49,15 +49,15 @@ namespace DupFree.Views
         private int _selectedGridIndex = -1;
         private int _gridColumns = 0;
         private System.Threading.CancellationTokenSource? _scanCancellation;
-        private const int FILES_PER_BATCH = 500;  // Render 500 files at a time
         private readonly SemaphoreSlim _thumbnailSemaphore = new(4);
         private readonly HashSet<string> _thumbnailLoading = new(StringComparer.OrdinalIgnoreCase);
-        // Limit concurrent video hover previews to avoid heavy CPU/memory usage
+        // Track/limit concurrent video hover previews
         private int _activeVideoPreviews = 0;
-        private const int MaxConcurrentVideoPreviews = 2;
+        private const int MaxConcurrentVideoPreviews = 6;
+        private readonly List<Action> _videoPreviewStoppers = [];
         // Limit concurrent manual GIF animations (hover) to avoid CPU spikes on large grids
         private int _activeGifAnimations = 0;
-        private const int MaxConcurrentGifAnimations = 6;
+        private const int MaxConcurrentGifAnimations = 16;
         private bool _isScanning = false;  // Track if a scan is currently in progress
 
         // Recycle Bin functionality
@@ -88,8 +88,7 @@ namespace DupFree.Views
             // Handle window size changes to refresh grid layout
             SizeChanged += MainWindow_SizeChanged;
 
-            // Load saved settings
-            SettingsService.LoadFromFile();
+            // Settings already loaded in App.OnStartup — no need to reload here.
 
             // Initialize grid dimensions from settings
             int gridSize = SettingsService.GridPictureSize;
@@ -545,7 +544,7 @@ namespace DupFree.Views
             try
             {
                 // attempt to enumerate a single entry
-                var entries = Directory.EnumerateFileSystemEntries(path).FirstOrDefault();
+                Directory.EnumerateFileSystemEntries(path).FirstOrDefault();
                 return true;
             }
             catch (UnauthorizedAccessException)
@@ -597,7 +596,8 @@ namespace DupFree.Views
             _selectedGridItems.Clear();  // Clear any selections
             _lastSelectedGridItem = null;
 
-            // Create cancellation token source for this scan
+            // Create cancellation token source for this scan (dispose previous if any)
+            _scanCancellation?.Dispose();
             _scanCancellation = new System.Threading.CancellationTokenSource();
 
             // Progress callback updates UI with current/total progress
@@ -1681,6 +1681,9 @@ namespace DupFree.Views
                     RefreshGridItemSelection();
                 }
 
+                // Track the selected index in the grid so deletion restores the closest item
+                _selectedGridIndex = _currentGridFiles.IndexOf(clickedFile);
+
                 _lastSelectedGridItem = clickedFile;
                 UpdateDeleteCount();
                 e.Handled = true;
@@ -1759,167 +1762,252 @@ namespace DupFree.Views
             var ext = Path.GetExtension(file.FilePath).ToLower();
             bool isAnimatedFile = ext == ".gif" || (ext == ".webp" && Services.ImagePreviewService.IsAnimatedWebP(file.FilePath));
             CancellationTokenSource? gifAnimCts = null;
-            if (isAnimatedFile)
-            {
-                grid.MouseEnter += async (_, __) =>
-                {
-                    try
-                    {
-                        Log.Info($"MouseEnter(animated) -> {file.FilePath}; animated present={file.AnimatedThumbnail != null}");
+            bool animationActive = false;
+            bool gridLoaded = false; // tracks whether grid is in visual tree
+            bool autoPlayStarted = false; // prevents double auto-play trigger
 
-                        if (ext == ".gif")
+            // Exposed starters so we can also trigger auto-play on load
+            Func<Task> startAnimatedPreview = () => Task.CompletedTask;
+            Func<Task> startVideoPreview = () => Task.CompletedTask;
+
+            bool IsTileInViewport()
+            {
+                try
+                {
+                    if (ResultsScrollViewer == null || !grid.IsLoaded || !grid.IsVisible)
+                        return false;
+
+                    var transform = grid.TransformToAncestor(ResultsScrollViewer);
+                    var rect = transform.TransformBounds(new Rect(0, 0, grid.ActualWidth, grid.ActualHeight));
+                    var viewport = new Rect(0, 0, ResultsScrollViewer.ViewportWidth, ResultsScrollViewer.ViewportHeight);
+                    return rect.IntersectsWith(viewport);
+                }
+                catch
+                {
+                    return false;
+                }
+            }
+
+            async Task EnsureAnimatedPreviewAsync()
+            {
+                if (!isAnimatedFile)
+                    return;
+
+                // Don't start animation on a grid that has been virtualized away
+                if (!gridLoaded)
+                    return;
+
+                // Don't animate tiles outside the visible viewport.
+                if (!IsTileInViewport())
+                    return;
+
+                // If a manual frame animation loop is already running, don't start another
+                if (gifAnimCts != null && !gifAnimCts.IsCancellationRequested)
+                    return;
+
+                // Prevent re-entrancy if animation is already active
+                if (animationActive)
+                    return;
+
+                animationActive = true;
+                try
+                {
+                    Log.Info($"Start animated preview -> {file.FilePath}; animated present={file.AnimatedThumbnail != null}");
+
+                    if (ext == ".gif")
+                    {
+                        // prefer cached manual frames for GIFs (more reliable than WPF/stream decoder)
+                        if (file.AnimatedFrames != null && file.AnimatedFrames.Length > 0)
                         {
-                            // prefer cached manual frames for GIFs (more reliable than WPF/stream decoder)
-                            if (file.AnimatedFrames != null && file.AnimatedFrames.Length > 0)
+                            if (_activeGifAnimations >= MaxConcurrentGifAnimations)
                             {
-                                if (_activeGifAnimations >= MaxConcurrentGifAnimations)
-                                {
-                                    Log.Info($"Skipping manual GIF animation for {file.FilePath} (limit reached)");
-                                }
-                                else
-                                {
-                                    _activeGifAnimations++;
-                                    gifAnimCts = new CancellationTokenSource();
-                                    _ = Task.Run(async () =>
-                                    {
-                                        try
-                                        {
-                                            var frames = file.AnimatedFrames;
-                                            var delays = file.AnimatedFrameDelays ?? [.. Enumerable.Repeat(80, frames.Length)];
-                                            int fi = 0;
-                                            Dispatcher.Invoke(() => image.Source = frames[0]);
-                                            while (!gifAnimCts.Token.IsCancellationRequested)
-                                            {
-                                                try { await Task.Delay(delays[fi % delays.Length], gifAnimCts.Token); } catch (TaskCanceledException) { break; }
-                                                fi = (fi + 1) % frames.Length;
-                                                Dispatcher.Invoke(() => image.Source = frames[fi]);
-                                            }
-                                        }
-                                        catch (Exception ex) { Log.Error(ex); }
-                                        finally
-                                        {
-                                            _activeGifAnimations = Math.Max(0, _activeGifAnimations - 1);
-                                            gifAnimCts = null;
-                                            Dispatcher.Invoke(() => { try { image.Source = file.Thumbnail; if (ext == ".gif") file.AnimatedThumbnail = null; } catch { } });
-                                        }
-                                    });
-                                }
-                                return;
+                                Log.Info($"Skipping manual GIF animation for {file.FilePath} (limit reached)");
                             }
-                        }
-                        else if (file.AnimatedThumbnail != null)
-                        {
-                            // re-assign to force animation start
-                            image.Source = null;
-                            await Task.Yield();
-                            image.Source = file.AnimatedThumbnail;
+                            else
+                            {
+                                _activeGifAnimations++;
+                                var localCts1 = new CancellationTokenSource();
+                                gifAnimCts = localCts1;
+                                var frames1 = file.AnimatedFrames;
+                                var delays1 = file.AnimatedFrameDelays ?? [.. Enumerable.Repeat(80, frames1.Length)];
+                                int fi1 = 0;
+                                image.Source = frames1[0];
+                                var animTimer1 = new System.Windows.Threading.DispatcherTimer(
+                                    System.Windows.Threading.DispatcherPriority.Background, Dispatcher)
+                                {
+                                    Interval = TimeSpan.FromMilliseconds(Math.Max(10, delays1[0]))
+                                };
+                                animTimer1.Tick += (ts, te) =>
+                                {
+                                    if (localCts1.IsCancellationRequested || !gridLoaded || !IsTileInViewport())
+                                    {
+                                        animTimer1.Stop();
+                                        _activeGifAnimations = Math.Max(0, _activeGifAnimations - 1);
+                                        gifAnimCts = null;
+                                        animationActive = false;
+                                        try { image.Source = file.Thumbnail; if (ext == ".gif") { try { file.AnimatedThumbnail = null; } catch { } } } catch { }
+                                        return;
+                                    }
+                                    fi1 = (fi1 + 1) % frames1.Length;
+                                    try { image.Source = frames1[fi1]; } catch { }
+                                    animTimer1.Interval = TimeSpan.FromMilliseconds(Math.Max(10, delays1[fi1 % delays1.Length]));
+                                };
+                                animTimer1.Start();
+                            }
+
                             return;
                         }
+                    }
+                    else if (file.AnimatedThumbnail != null)
+                    {
+                        // re-assign to force animation start
+                        image.Source = null;
+                        await Task.Yield();
+                        image.Source = file.AnimatedThumbnail;
+                        return;
+                    }
 
-                        // Try Magick -> GIF/WebP bytes -> animated BitmapImage (but avoid stream-based BitmapImage for GIFs,
-                        // as some GIF variants do not animate when created from a stream). For GIF prefer URI-based or manual frames.
-                        var bytes = await Task.Run(() => Services.ImagePreviewService.GetAnimatedImageBytes(file.FilePath, (int)size, (int)size));
+                    // Try Magick -> GIF/WebP bytes -> animated BitmapImage (but avoid stream-based BitmapImage for GIFs,
+                    // as some GIF variants do not animate when created from a stream). For GIF prefer URI-based or manual frames.
+                    var bytes = await Task.Run(() => Services.ImagePreviewService.GetAnimatedImageBytes(file.FilePath, (int)size, (int)size));
 
-                        if (ext != ".gif" && bytes != null)
+                    if (ext != ".gif" && bytes != null)
+                    {
+                        try
                         {
-                            try
+                            var animatedBm = Services.ImagePreviewService.CreateBitmapImageFromBytes(bytes, (int)size, freeze: false);
+                            Dispatcher.Invoke(() =>
                             {
-                                var animatedBm = Services.ImagePreviewService.CreateBitmapImageFromBytes(bytes, (int)size, freeze: false);
-                                Dispatcher.Invoke(() =>
+                                file.AnimatedThumbnail = animatedBm;
+                                image.Source = null; // force swap/reload
+                                image.Source = file.AnimatedThumbnail;
+                                Log.Info($"Applied animated thumbnail for {file.FilePath} (from bytes)");
+                            });
+                            return;
+                        }
+                        catch (Exception ex)
+                        {
+                            Log.Error(ex);
+                        }
+                    }
+
+                    // Fallback for GIF files: load directly from disk (WPF's native GIF animation).
+                    // Use IgnoreImageCache + OnLoad and force a reload of the Image control to avoid a cached static/frame-only image.
+                    if (ext == ".gif")
+                    {
+                        try
+                        {
+                            var uriBm = new BitmapImage();
+                            uriBm.BeginInit();
+                            uriBm.UriSource = new Uri(file.FilePath, UriKind.Absolute);
+                            uriBm.CacheOption = BitmapCacheOption.OnLoad; // fully load so stream isn't required later
+                            uriBm.CreateOptions = BitmapCreateOptions.IgnoreImageCache; // bypass any cached static frame
+                            uriBm.DecodePixelWidth = (int)size;
+                            uriBm.EndInit();
+
+                            file.AnimatedThumbnail = uriBm;
+
+                            // Force Source swap to reliably start WPF GIF animation (clear + reassign briefly)
+                            image.Source = null;
+                            await Task.Yield();
+                            image.Source = uriBm;
+
+                            Log.Info($"Fallback: Uri-based GIF animation applied for {file.FilePath}");
+                            return;
+                        }
+                        catch (Exception ex)
+                        {
+                            Log.Error(ex);
+                        }
+                    }
+
+                    Log.Info($"No animated preview available for {file.FilePath} — attempting manual frame animation fallback");
+
+                    // Manual frame animation fallback (Magick -> frame PNGs -> dispatcher timer loop).
+                    if (_activeGifAnimations >= MaxConcurrentGifAnimations)
+                    {
+                        Log.Info($"Skipping manual GIF animation for {file.FilePath} (concurrency limit reached)");
+                    }
+                    else
+                    {
+                        _activeGifAnimations++;
+                        var localCts2 = new CancellationTokenSource();
+                        gifAnimCts = localCts2;
+                        bool timerStarted = false;
+                        try
+                        {
+                            var (Frames, Delays) = await Task.Run(() => Services.ImagePreviewService.GetAnimatedFrames(file.FilePath, (int)size, (int)size));
+                            if (Frames != null && Frames.Length > 0 && !localCts2.IsCancellationRequested && gridLoaded)
+                            {
+                                Log.Info($"Manual GIF animator: frames={Frames.Length} for {file.FilePath}");
+                                int fi2 = 0;
+                                image.Source = Frames[0];
+                                var animTimer2 = new System.Windows.Threading.DispatcherTimer(
+                                    System.Windows.Threading.DispatcherPriority.Background, Dispatcher)
                                 {
-                                    file.AnimatedThumbnail = animatedBm;
-                                    image.Source = null; // force swap/reload
-                                    image.Source = file.AnimatedThumbnail;
-                                    Log.Info($"Applied animated thumbnail for {file.FilePath} (from bytes)");
-                                });
-                                return;
-                            }
-                            catch (Exception ex)
-                            {
-                                Log.Error(ex);
-                            }
-                        }
-
-                        // Fallback for GIF files: load directly from disk (WPF's native GIF animation).
-                        // Use IgnoreImageCache + OnLoad and force a reload of the Image control to avoid a cached static/frame-only image.
-                        if (ext == ".gif")
-                        {
-                            try
-                            {
-                                var uriBm = new BitmapImage();
-                                uriBm.BeginInit();
-                                uriBm.UriSource = new Uri(file.FilePath, UriKind.Absolute);
-                                uriBm.CacheOption = BitmapCacheOption.OnLoad; // fully load so stream isn't required later
-                                uriBm.CreateOptions = BitmapCreateOptions.IgnoreImageCache; // bypass any cached static frame
-                                uriBm.DecodePixelWidth = (int)size;
-                                uriBm.EndInit();
-
-                                file.AnimatedThumbnail = uriBm;
-
-                                // Force Source swap to reliably start WPF GIF animation (clear + reassign briefly)
-                                image.Source = null;
-                                await Task.Yield();
-                                image.Source = uriBm;
-
-                                Log.Info($"Fallback: Uri-based GIF animation applied for {file.FilePath}");
-                                return;
-                            }
-                            catch (Exception ex)
-                            {
-                                Log.Error(ex);
-                            }
-                        }
-
-                        Log.Info($"No animated preview available for {file.FilePath} — attempting manual frame animation fallback");
-
-                        // Manual frame animation fallback (Magick -> frame PNGs -> dispatcher timer loop).
-                        if (_activeGifAnimations >= MaxConcurrentGifAnimations)
-                        {
-                            Log.Info($"Skipping manual GIF animation for {file.FilePath} (concurrency limit reached)");
-                        }
-                        else
-                        {
-                            _activeGifAnimations++;
-                            gifAnimCts = new CancellationTokenSource();
-                            try
-                            {
-                                var (Frames, Delays) = await Task.Run(() => Services.ImagePreviewService.GetAnimatedFrames(file.FilePath, (int)size, (int)size));
-                                var frames = Frames;
-                                var delays = Delays;
-                                if (frames != null && frames.Length > 0)
+                                    Interval = TimeSpan.FromMilliseconds(Math.Max(10, Delays.Length > 0 ? Delays[0] : 80))
+                                };
+                                animTimer2.Tick += (ts, te) =>
                                 {
-                                    Log.Info($"Manual GIF animator: frames={frames.Length} for {file.FilePath}");
-                                    int fi = 0;
-                                    Dispatcher.Invoke(() => image.Source = frames[0]);
-                                    while (!gifAnimCts.Token.IsCancellationRequested)
+                                    if (localCts2.IsCancellationRequested || !gridLoaded || !IsTileInViewport())
                                     {
-                                        var wait = delays[fi % delays.Length];
-                                        try { await Task.Delay(wait, gifAnimCts.Token); } catch (TaskCanceledException) { break; }
-                                        fi = (fi + 1) % frames.Length;
-                                        Dispatcher.Invoke(() => image.Source = frames[fi]);
+                                        animTimer2.Stop();
+                                        _activeGifAnimations = Math.Max(0, _activeGifAnimations - 1);
+                                        gifAnimCts = null;
+                                        animationActive = false;
+                                        try { image.Source = file.Thumbnail; if (ext == ".gif") { try { file.AnimatedThumbnail = null; } catch { } } } catch { }
+                                        return;
                                     }
-                                }
+                                    fi2 = (fi2 + 1) % Frames.Length;
+                                    try { image.Source = Frames[fi2]; } catch { }
+                                    animTimer2.Interval = TimeSpan.FromMilliseconds(Math.Max(10, Delays[fi2 % Delays.Length]));
+                                };
+                                animTimer2.Start();
+                                timerStarted = true;
                             }
-                            catch (Exception ex)
-                            {
-                                Log.Error(ex);
-                            }
-                            finally
+                        }
+                        catch (Exception ex)
+                        {
+                            Log.Error(ex);
+                        }
+                        finally
+                        {
+                            if (!timerStarted)
                             {
                                 _activeGifAnimations = Math.Max(0, _activeGifAnimations - 1);
                                 gifAnimCts = null;
-                                Dispatcher.Invoke(() => { try { image.Source = file.Thumbnail; if (ext == ".gif") file.AnimatedThumbnail = null; } catch { } });
+                                // animationActive reset is handled by the outer finally
                             }
                         }
                     }
-                    catch (Exception ex)
-                    {
-                        Log.Error(ex);
-                    }
-                };
+                }
+                catch (Exception ex)
+                {
+                    Log.Error(ex);
+                }
+                finally
+                {
+                    // Only reset if no DispatcherTimer animation is running.
+                    // Active timers hold a non-cancelled gifAnimCts so this correctly
+                    // leaves animationActive=true while a timer is ticking.
+                    if (gifAnimCts == null || gifAnimCts.IsCancellationRequested)
+                        animationActive = false;
+                }
+            }
+
+            // assign so it can be invoked from grid.Loaded (for auto-play)
+            startAnimatedPreview = EnsureAnimatedPreviewAsync;
+
+            if (isAnimatedFile)
+            {
+                grid.MouseEnter += async (_, __) => await EnsureAnimatedPreviewAsync();
 
                 grid.MouseLeave += (_, __) =>
                 {
+                    // If the user has opted to auto-play previews, do not stop playback on mouse leave.
+                    if (SettingsService.GetAutoPlayAnimatedPreviews())
+                        return;
+
                     try
                     {
                         // cancel any manual animator and clear GIF-native animated cache so the tile returns to static state
@@ -1933,13 +2021,29 @@ namespace DupFree.Views
                     }
                     catch { }
                 };
+
+                // Ensure we stop animation when the item is unloaded (e.g. virtualized away)
+                grid.Unloaded += (_, __) =>
+                {
+                    gridLoaded = false;
+                    autoPlayStarted = false;
+                    try
+                    {
+                        gifAnimCts?.Cancel();
+                        if (ext == ".gif")
+                        {
+                            try { file.AnimatedThumbnail = null; } catch { }
+                        }
+                        animationActive = false;
+                    }
+                    catch { }
+                };
             }
 
             grid.Children.Add(image);
 
             // --- Video hover preview (lightweight) ---
             MediaElement? media = null;
-            CancellationTokenSource? hoverCts = null;
 
             if (Services.ImagePreviewService.IsVideoFile(file.FilePath))
             {
@@ -1958,11 +2062,30 @@ namespace DupFree.Views
                 // place media on top of the static image
                 grid.Children.Add(media);
 
+                bool videoPreviewActive = false;
+                bool videoFailed = false;
+                Action? myStopAction = null;
+
+                // Loop video when it ends
+                media.MediaEnded += (_, __) =>
+                {
+                    try
+                    {
+                        if (gridLoaded && media.Visibility == Visibility.Visible)
+                        {
+                            media.Position = TimeSpan.Zero;
+                            media.Play();
+                        }
+                    }
+                    catch { }
+                };
+
                 // Media events for diagnostics and UI fallback
                 media.MediaOpened += (_, __) => Log.Info($"MediaOpened: {file.FilePath} naturalDuration={media.NaturalDuration}");
                 media.MediaFailed += (_, e) =>
                 {
                     Log.Error($"MediaFailed: {file.FilePath} - {e.ErrorException?.Message ?? e.ErrorException?.ToString()}");
+                    videoFailed = true; // prevent further retry for this tile
                     try
                     {
                         // hide media control, clear source and show a visible error marker so user knows preview failed
@@ -1983,20 +2106,43 @@ namespace DupFree.Views
                     catch { }
                 };
 
-                grid.MouseEnter += async (_, __) =>
+                void StopVideoPreview()
                 {
-                    Log.Info($"MouseEnter(video) -> {file.FilePath}; active={_activeVideoPreviews}");
-
-                    // throttle concurrent previews
-                    if (_activeVideoPreviews >= MaxConcurrentVideoPreviews)
-                    {
-                        Log.Info("Skipping video preview (limit reached)");
+                    if (!videoPreviewActive)
                         return;
+                    try { media.Pause(); media.Visibility = Visibility.Collapsed; Log.Info($"Media stopped for {file.FilePath}"); } catch { }
+                    _activeVideoPreviews = Math.Max(0, _activeVideoPreviews - 1);
+                    if (myStopAction != null) _videoPreviewStoppers.Remove(myStopAction);
+                    videoPreviewActive = false;
+                }
+                myStopAction = StopVideoPreview;
+
+                Task EnsureVideoPreviewAsync()
+                {
+                    if (videoPreviewActive || videoFailed)
+                        return Task.CompletedTask;
+
+                    // Don't start video preview on a grid that has been virtualized away
+                    if (!gridLoaded)
+                        return Task.CompletedTask;
+
+                    // Don't play videos outside the viewport.
+                    if (!IsTileInViewport())
+                        return Task.CompletedTask;
+
+                    Log.Info($"Start video preview -> {file.FilePath}; active={_activeVideoPreviews}");
+
+                    // Evict the oldest playing video if we are at the cap
+                    while (_videoPreviewStoppers.Count >= MaxConcurrentVideoPreviews && _videoPreviewStoppers.Count > 0)
+                    {
+                        var oldest = _videoPreviewStoppers[0];
+                        _videoPreviewStoppers.RemoveAt(0); // remove before invoking to avoid re-entry
+                        try { oldest(); } catch { }
                     }
 
+                    videoPreviewActive = true;
                     _activeVideoPreviews++;
-                    hoverCts?.Cancel();
-                    hoverCts = new CancellationTokenSource();
+                    _videoPreviewStoppers.Add(myStopAction!);
                     try
                     {
                         // set Source lazily to avoid preloading every video
@@ -2008,39 +2154,57 @@ namespace DupFree.Views
 
                         media.Visibility = Visibility.Visible;
                         media.Position = TimeSpan.Zero;
-                        try
-                        {
-                            media.Play();
-                            Log.Info($"Media.Play invoked for {file.FilePath}");
-                        }
-                        catch (Exception ex)
-                        {
-                            Log.Error(ex);
-                        }
-
-                        // play a short preview (2.5s) or until mouse leaves
-                        await Task.Delay(2500, hoverCts.Token).ContinueWith(t => { }, TaskScheduler.Default);
-                    }
-                    catch (TaskCanceledException)
-                    {
-                        Log.Info($"Video preview cancelled for {file.FilePath}");
+                        media.Play();
+                        Log.Info($"Media.Play invoked for {file.FilePath}");
+                        // Video loops via MediaEnded handler. Cleanup via StopVideoPreview on mouse leave / unload.
                     }
                     catch (Exception ex)
                     {
                         Log.Error(ex);
+                        videoFailed = true;
+                        StopVideoPreview();
                     }
-                    finally
+                    return Task.CompletedTask;
+                }
+
+                // assign so it can be invoked from grid.Loaded (for auto-play)
+                startVideoPreview = EnsureVideoPreviewAsync;
+
+                ScrollChangedEventHandler? viewportStopper = null;
+                viewportStopper = (_, __) =>
+                {
+                    if (!IsTileInViewport())
                     {
-                        try { media.Pause(); media.Visibility = Visibility.Collapsed; Log.Info($"Media stopped for {file.FilePath}"); } catch { }
-                        _activeVideoPreviews = Math.Max(0, _activeVideoPreviews - 1);
+                        gifAnimCts?.Cancel();
+                        StopVideoPreview();
                     }
+                };
+                ResultsScrollViewer.ScrollChanged += viewportStopper;
+
+                grid.MouseEnter += async (_, __) =>
+                {
+                    await EnsureVideoPreviewAsync();
                 };
 
                 grid.MouseLeave += (_, __) =>
                 {
-                    hoverCts?.Cancel();
-                    hoverCts = null;
-                    try { if (media != null) { media.Stop(); media.Visibility = Visibility.Collapsed; } } catch { }
+                    // If the user has opted to auto-play previews, do not stop playback on mouse leave.
+                    if (SettingsService.GetAutoPlayAnimatedPreviews())
+                        return;
+
+                    StopVideoPreview();
+                };
+
+                // Ensure we stop playback when the item is unloaded (e.g. virtualized away)
+                grid.Unloaded += (_, __) =>
+                {
+                    StopVideoPreview();
+                    videoFailed = false; // allow retry on next load
+                    if (viewportStopper != null)
+                    {
+                        try { ResultsScrollViewer.ScrollChanged -= viewportStopper; } catch { }
+                    }
+                    try { if (media != null) { media.Source = null; } } catch { }
                 };
             }
 
@@ -2055,8 +2219,26 @@ namespace DupFree.Views
                 }
             }, nameof(FileItemViewModel.Thumbnail));
 
-            grid.Loaded += (_, __) =>
+            // When animated frames become available (populated by EnsureThumbnailAsync), auto-play if enabled.
+            if (isAnimatedFile)
             {
+                PropertyChangedEventManager.AddHandler(file, (_, args) =>
+                {
+                    if (args.PropertyName == nameof(FileItemViewModel.AnimatedFrames)
+                        && file.AnimatedFrames != null && file.AnimatedFrames.Length > 0
+                        && SettingsService.GetAutoPlayAnimatedPreviews()
+                        && gridLoaded && !autoPlayStarted && IsTileInViewport())
+                    {
+                        autoPlayStarted = true;
+                        _ = startAnimatedPreview();
+                    }
+                }, nameof(FileItemViewModel.AnimatedFrames));
+            }
+
+            grid.Loaded += async (_, __) =>
+            {
+                gridLoaded = true;
+
                 // allow video thumbnails and image thumbnails to be prepared here
                 if (!file.IsPreviewable && !Services.ImagePreviewService.IsVideoFile(file.FilePath))
                     return;
@@ -2086,6 +2268,25 @@ namespace DupFree.Views
 
                 // for video files we intentionally do not pre-load video content here
                 // to avoid heavy I/O — media Source is assigned lazily on hover.
+
+                // If the user has enabled auto-play previews, trigger the playback logic once when the tile is loaded.
+                if (SettingsService.GetAutoPlayAnimatedPreviews())
+                {
+                    // Defer to allow WPF to finish initial layout and ensure media elements are ready.
+                    Dispatcher.BeginInvoke(new Action(() =>
+                    {
+                        // Animated images: only if frames are already cached (e.g. recycled tile).
+                        // Otherwise, PropertyChanged on AnimatedFrames will trigger auto-play once frames load.
+                        if (isAnimatedFile && file.AnimatedFrames != null && file.AnimatedFrames.Length > 0 && !autoPlayStarted)
+                        {
+                            autoPlayStarted = true;
+                            _ = startAnimatedPreview();
+                        }
+
+                        // Video (if any)
+                        _ = startVideoPreview();
+                    }), System.Windows.Threading.DispatcherPriority.Background);
+                }
             };
 
             return grid;
@@ -2095,10 +2296,7 @@ namespace DupFree.Views
         {
             lock (_thumbnailLoading)
             {
-                if (_thumbnailLoading.Contains(filePath))
-                    return false;
-                _thumbnailLoading.Add(filePath);
-                return true;
+                return _thumbnailLoading.Add(filePath);
             }
         }
 
@@ -2126,10 +2324,24 @@ namespace DupFree.Views
                 if (ext == ".gif" || (ext == ".webp" && Services.ImagePreviewService.IsAnimatedWebP(file.FilePath)))
                 {
                     Log.Info($"EnsureThumbnailAsync START (animated): {file.FilePath}");
-                    var animatedBytes = await Task.Run(() => Services.ImagePreviewService.GetAnimatedImageBytes(file.FilePath, size, size));
-                    var firstFrame = await Task.Run(() => Services.ImagePreviewService.GetFirstFrameBitmap(file.FilePath, size, size));
-                    // also try extracting manual frames (cached) for reliable GIF animation
+                    // Extract frames once — this gives us both the static first frame and animation data.
                     var (Frames, Delays) = await Task.Run(() => Services.ImagePreviewService.GetAnimatedFrames(file.FilePath, size, size));
+                    // Only fetch raw animated bytes if frame extraction failed (fallback for AnimatedThumbnail).
+                    byte[]? animatedBytes = null;
+                    BitmapImage? firstFrame = (Frames != null && Frames.Length > 0) ? Frames[0] as BitmapImage : null;
+                    if (firstFrame == null && Frames != null && Frames.Length > 0)
+                    {
+                        // Frame exists but isn't BitmapImage — create one from first frame bytes
+                        firstFrame = await Task.Run(() => Services.ImagePreviewService.GetFirstFrameBitmap(file.FilePath, size, size));
+                    }
+                    if (firstFrame == null)
+                    {
+                        animatedBytes = await Task.Run(() => Services.ImagePreviewService.GetAnimatedImageBytes(file.FilePath, size, size));
+                        if (animatedBytes == null)
+                        {
+                            firstFrame = await Task.Run(() => Services.ImagePreviewService.GetFirstFrameBitmap(file.FilePath, size, size));
+                        }
+                    }
                     Log.Info($"EnsureThumbnailAsync: {file.FilePath} animatedBytes={(animatedBytes != null ? animatedBytes.Length.ToString() : "null")}, firstFrame={(firstFrame != null ? "ok" : "null")}, frames={(Frames != null ? Frames.Length.ToString() : "0")} ");
 
                     if (animatedBytes == null && firstFrame == null)
@@ -2196,8 +2408,41 @@ namespace DupFree.Views
                 }
                 else
                 {
-                    // Static images (including static WebP) — safe to create/freeze on background thread
-                    var thumb = await Task.Run(() => Services.ImagePreviewService.GetThumbnail(file.FilePath, size, size));
+                    // Static images (including static WebP) — safe to create/freeze on background thread.
+                    BitmapImage? thumb = null;
+                    try
+                    {
+                        thumb = await Task.Run(() => Services.ImagePreviewService.GetThumbnail(file.FilePath, size, size));
+                    }
+                    catch { }
+
+                    // Fallback: attempt direct WPF load if Magick fails or returns null.
+                    if (thumb == null)
+                    {
+                        try
+                        {
+                            var direct = new BitmapImage();
+                            direct.BeginInit();
+                            direct.UriSource = new Uri(file.FilePath, UriKind.Absolute);
+                            direct.CacheOption = BitmapCacheOption.OnLoad;
+                            direct.DecodePixelWidth = size;
+                            direct.EndInit();
+                            direct.Freeze();
+                            thumb = direct;
+                        }
+                        catch { }
+                    }
+
+                    if (thumb == null)
+                    {
+                        // As a last resort, try the Windows shell thumbnail API (works for many formats).
+                        try
+                        {
+                            thumb = Services.ImagePreviewService.GetVideoThumbnail(file.FilePath, size, size);
+                        }
+                        catch { }
+                    }
+
                     if (thumb == null)
                         return;
 
@@ -2216,53 +2461,6 @@ namespace DupFree.Views
                 _thumbnailSemaphore.Release();
                 EndThumbnailLoad(file.FilePath);
             }
-        }
-
-        private FrameworkElement CreateListView(FileItemViewModel file)
-        {
-            var grid = new Grid
-            {
-                Height = 40,
-                Background = Application.Current.Resources["PanelBackground"] as System.Windows.Media.Brush,
-                Margin = new Thickness(0, 1, 0, 0)
-            };
-
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(150) });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(100) });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(150) });
-
-            var border = new Border
-            {
-                BorderThickness = new Thickness(0, 0, 0, 1)
-            };
-            border.SetResourceReference(Border.BorderBrushProperty, "BorderBrush");
-
-            var nameBlock = new TextBlock { Text = file.FileName, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(5, 0, 0, 0) };
-            Grid.SetColumn(nameBlock, 0);
-
-            var pathBlock = new TextBlock { Text = file.FilePath, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(5, 0, 0, 0) };
-            Grid.SetColumn(pathBlock, 1);
-
-            var sizeBlock = new TextBlock { Text = file.SizeFormatted, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(5, 0, 0, 0), TextAlignment = TextAlignment.Right };
-            Grid.SetColumn(sizeBlock, 2);
-
-            var dateBlock = new TextBlock { Text = file.ModifiedDate.ToString("yyyy-MM-dd"), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(5, 0, 5, 0), TextAlignment = TextAlignment.Right };
-            Grid.SetColumn(dateBlock, 3);
-
-            grid.Children.Add(nameBlock);
-            // Apply dynamic foregrounds
-            nameBlock.SetResourceReference(TextBlock.ForegroundProperty, "WindowForeground");
-            pathBlock.SetResourceReference(TextBlock.ForegroundProperty, "ControlForeground");
-            sizeBlock.SetResourceReference(TextBlock.ForegroundProperty, "ControlForeground");
-            dateBlock.SetResourceReference(TextBlock.ForegroundProperty, "ControlForeground");
-
-            grid.Children.Add(pathBlock);
-            grid.Children.Add(sizeBlock);
-            grid.Children.Add(dateBlock);
-
-            border.Child = grid;
-            return border;
         }
 
         private async void OnDeleteMenuItem_Click(object sender, RoutedEventArgs e)
@@ -2555,6 +2753,78 @@ namespace DupFree.Views
             return null;
         }
 
+        /// <summary>Batch-delete multiple files with a single UI refresh at the end (used by keyboard Delete in grid view).</summary>
+        private async Task BatchDeleteFilesAsync(List<FileItemViewModel> filesToDelete)
+        {
+            if (filesToDelete.Count == 0) return;
+
+            if (filesToDelete.Count == 1)
+            {
+                await DeleteFileAsync(filesToDelete[0]);
+                return;
+            }
+
+            if (Services.SettingsService.ConfirmDelete)
+            {
+                var result = MessageBox.Show(string.Format(Properties.Resources.ConfirmDeleteMultipleFormat, filesToDelete.Count),
+                    "Confirm delete", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+                if (result != MessageBoxResult.Yes) return;
+            }
+
+            double gridOffset = ResultsScrollViewer?.VerticalOffset ?? 0;
+            int keepIndex = _selectedGridIndex;
+
+            foreach (var file in filesToDelete) AddToRecycleBin(file);
+
+            var paths = filesToDelete.Select(f => f.FilePath).ToList();
+            await Task.Run(() =>
+            {
+                foreach (var p in paths)
+                {
+                    try { FileSystem.DeleteFile(p, UIOption.OnlyErrorDialogs, RecycleOption.SendToRecycleBin); }
+                    catch { try { File.Delete(p); } catch { } }
+                }
+            });
+
+            var deletedPaths = new HashSet<string>(paths, StringComparer.OrdinalIgnoreCase);
+            foreach (var group in _groupViewModels)
+            {
+                var removed = group.Files.RemoveAll(f => deletedPaths.Contains(f.FilePath));
+                if (removed > 0) _totalDeletedSize += filesToDelete.Where(f => deletedPaths.Contains(f.FilePath)).Sum(f => f.FileSize);
+            }
+            _selectedGridItems.RemoveAll(f => deletedPaths.Contains(f.FilePath));
+            _currentGridFiles.RemoveAll(f => deletedPaths.Contains(f.FilePath));
+            _groupViewModels.RemoveAll(g => g.Files.Count <= 1);
+
+            ApplySorting();
+            if (ResultsDataGrid != null) ResultsDataGrid.ItemsSource = null;
+            if (ResultsListView != null) ResultsListView.ItemsSource = null;
+            DisplayResults();
+            UpdateFooterStats();
+            UpdateDeleteCount();
+
+            _ = Dispatcher.BeginInvoke(() =>
+            {
+                if (ResultsScrollViewer != null)
+                    ResultsScrollViewer.ScrollToVerticalOffset(gridOffset);
+            }, System.Windows.Threading.DispatcherPriority.Loaded);
+
+            if (_currentGridFiles.Count > 0)
+            {
+                _selectedGridIndex = Math.Clamp(keepIndex < 0 ? 0 : keepIndex, 0, _currentGridFiles.Count - 1);
+                _selectedGridItems.Clear();
+                _selectedGridItems.Add(_currentGridFiles[_selectedGridIndex]);
+                _lastSelectedGridItem = _selectedGridItems.FirstOrDefault();
+                RefreshGridItemSelection();
+            }
+            else
+            {
+                _selectedGridIndex = -1;
+                _selectedGridItems.Clear();
+                _lastSelectedGridItem = null;
+            }
+        }
+
         private async Task DeleteFileAsync(FileItemViewModel file, bool skipConfirm = false)
         {
             try
@@ -2605,8 +2875,18 @@ namespace DupFree.Views
                         try { File.Delete(file.FilePath); } catch { }
                     }
                 });
-                // Remember current selection positions
-                int oldGridIndex = _selectedGridIndex;
+                // Remember current selection positions (use the deleted file's grid position when available)
+                int oldGridIndex = -1;
+                if (_currentViewMode != "list")
+                {
+                    oldGridIndex = _currentGridFiles.IndexOf(file);
+                    if (oldGridIndex < 0)
+                        oldGridIndex = _selectedGridIndex;
+                }
+                else
+                {
+                    oldGridIndex = _selectedGridIndex;
+                }
                 int oldListIndex = ResultsListView?.SelectedIndex ?? -1;
                 int oldDataGridIndex = ResultsDataGrid?.SelectedIndex ?? -1;
 
@@ -2633,11 +2913,21 @@ namespace DupFree.Views
                 if (_currentViewMode != "list")
                 {
                     if (flatAfter.Count == 0)
+                    {
                         _selectedGridIndex = -1;
-                    else if (oldGridIndex < 0)
-                        _selectedGridIndex = 0;
+                        _selectedGridItems.Clear();
+                        _lastSelectedGridItem = null;
+                    }
                     else
-                        _selectedGridIndex = Math.Min(oldGridIndex, flatAfter.Count - 1);
+                    {
+                        _selectedGridIndex = Math.Min(oldGridIndex < 0 ? 0 : oldGridIndex, flatAfter.Count - 1);
+
+                        // Keep a single item selected so the grid selection persists after deletion
+                        var selectedFile = flatAfter[_selectedGridIndex];
+                        _selectedGridItems.Clear();
+                        _selectedGridItems.Add(selectedFile);
+                        _lastSelectedGridItem = selectedFile;
+                    }
                 }
 
                 ApplySorting();
@@ -2870,6 +3160,9 @@ namespace DupFree.Views
             if (EnableTelemetryCheckBox != null)
                 EnableTelemetryCheckBox.IsChecked = SettingsService.GetEnableTelemetry();
 
+            if (AutoPlayPreviewsCheckBox != null)
+                AutoPlayPreviewsCheckBox.IsChecked = SettingsService.GetAutoPlayAnimatedPreviews();
+
             if (RecycleBinSizeTextBox != null)
                 RecycleBinSizeTextBox.Text = SettingsService.MaxRecycleBinSize.ToString();
         }
@@ -2882,7 +3175,6 @@ namespace DupFree.Views
                 return;
 
             SettingsService.SetConfirmDelete(ConfirmDeleteCheckBox.IsChecked == true);
-            SettingsService.SaveToFile();
         }
 
         private void SaveRecycleBinSizeButton_Click(object sender, RoutedEventArgs e)
@@ -2901,7 +3193,6 @@ namespace DupFree.Views
                 }
 
                 SettingsService.SetMaxRecycleBinSize(maxSize);
-                SettingsService.SaveToFile();
 
                 // Trim existing recycle bin if needed
                 if (maxSize > 0)
@@ -3105,7 +3396,11 @@ namespace DupFree.Views
 
             // remember a position to reselect after deletion
             int keepIndex = -1;
-            if (ResultsDataGrid != null && ResultsDataGrid.SelectedIndex >= 0)
+            if (_currentViewMode != "list")
+            {
+                keepIndex = toDelete.Count > 0 ? _currentGridFiles.IndexOf(toDelete[0]) : _selectedGridIndex;
+            }
+            else if (ResultsDataGrid != null && ResultsDataGrid.SelectedIndex >= 0)
             {
                 keepIndex = ResultsDataGrid.SelectedIndex;
             }
@@ -3114,38 +3409,119 @@ namespace DupFree.Views
                 keepIndex = ResultsListView.SelectedIndex;
             }
 
-            foreach (var file in toDelete.ToList())
+            // Capture scroll offsets before deletion so we can restore them.
+            double dataGridOffset = 0, listOffset = 0, gridOffset = 0;
+            if (ResultsDataGrid != null && FindScrollViewer(ResultsDataGrid) is ScrollViewer dgvSel)
+                dataGridOffset = dgvSel.VerticalOffset;
+            if (ResultsListView != null && FindScrollViewer(ResultsListView) is ScrollViewer lvSel)
+                listOffset = lvSel.VerticalOffset;
+            if (ResultsScrollViewer != null)
+                gridOffset = ResultsScrollViewer.VerticalOffset;
+
+            StatusText.Text = $"Deleting {toDelete.Count} file(s)...";
+
+            // Add all files to recycle bin before deleting
+            foreach (var file in toDelete)
             {
-                await DeleteFileAsync(file, skipConfirm: true);
+                AddToRecycleBin(file);
             }
 
-            // Clear existing selections
-            _selectedGridItems.Clear();
-            if (ResultsDataGrid != null)
+            // Delete all files on a background thread (no per-file UI rebuild)
+            var pathsToDelete = toDelete.Select(f => f.FilePath).ToList();
+            int deleted = 0, failed = 0;
+            await Task.Run(() =>
             {
-                ResultsDataGrid.SelectedItems.Clear();
-                if (keepIndex >= 0 && keepIndex < ResultsDataGrid.Items.Count)
+                foreach (var path in pathsToDelete)
                 {
-                    ResultsDataGrid.SelectedIndex = keepIndex;
+                    try
+                    {
+                        FileSystem.DeleteFile(path, UIOption.OnlyErrorDialogs, RecycleOption.SendToRecycleBin);
+                        Interlocked.Increment(ref deleted);
+                    }
+                    catch
+                    {
+                        try { File.Delete(path); Interlocked.Increment(ref deleted); }
+                        catch { Interlocked.Increment(ref failed); }
+                    }
+                }
+            });
+
+            // Remove deleted files from view models in one pass
+            var deletedPaths = new HashSet<string>(pathsToDelete, StringComparer.OrdinalIgnoreCase);
+            foreach (var group in _groupViewModels)
+            {
+                var removedCount = group.Files.RemoveAll(f => deletedPaths.Contains(f.FilePath));
+                if (removedCount > 0)
+                    _totalDeletedSize += toDelete.Where(f => deletedPaths.Contains(f.FilePath))
+                                                  .Sum(f => f.FileSize);
+            }
+
+            _selectedGridItems.RemoveAll(f => deletedPaths.Contains(f.FilePath));
+            _currentGridFiles.RemoveAll(f => deletedPaths.Contains(f.FilePath));
+            _groupViewModels.RemoveAll(g => g.Files.Count <= 1);
+
+            // Single UI rebuild after all deletions
+            ApplySorting();
+            if (ResultsDataGrid != null) ResultsDataGrid.ItemsSource = null;
+            if (ResultsListView != null) ResultsListView.ItemsSource = null;
+            DisplayResults();
+            UpdateFooterStats();
+
+            // Restore scroll offsets
+            _ = Dispatcher.BeginInvoke(() =>
+            {
+                if (ResultsListView != null && FindScrollViewer(ResultsListView) is ScrollViewer lv2)
+                    lv2.ScrollToVerticalOffset(listOffset);
+                if (ResultsDataGrid != null && FindScrollViewer(ResultsDataGrid) is ScrollViewer dgv2)
+                    dgv2.ScrollToVerticalOffset(dataGridOffset);
+                if (ResultsScrollViewer != null)
+                    ResultsScrollViewer.ScrollToVerticalOffset(gridOffset);
+            }, System.Windows.Threading.DispatcherPriority.Loaded);
+
+            // Update selection after deletion
+            if (_currentViewMode != "list")
+            {
+                var flatAfter = _groupViewModels.SelectMany(g => g.Files).ToList();
+                if (flatAfter.Count > 0 && _currentGridFiles.Count > 0)
+                {
+                    _selectedGridIndex = Math.Clamp(keepIndex < 0 ? 0 : keepIndex, 0, _currentGridFiles.Count - 1);
+                    _selectedGridItems.Clear();
+                    _selectedGridItems.Add(_currentGridFiles[_selectedGridIndex]);
+                    _lastSelectedGridItem = _selectedGridItems.FirstOrDefault();
+                    RefreshGridItemSelection();
                 }
                 else
                 {
-                    ResultsDataGrid.SelectedIndex = -1;
+                    _selectedGridIndex = -1;
+                    _selectedGridItems.Clear();
+                    _lastSelectedGridItem = null;
                 }
             }
-            if (ResultsListView != null)
+            else
             {
-                ResultsListView.SelectedItems.Clear();
-                if (keepIndex >= 0 && keepIndex < ResultsListView.Items.Count)
+                _selectedGridItems.Clear();
+                _lastSelectedGridItem = null;
+
+                if (ResultsDataGrid != null)
                 {
-                    ResultsListView.SelectedIndex = keepIndex;
+                    ResultsDataGrid.SelectedItems.Clear();
+                    if (keepIndex >= 0 && keepIndex < ResultsDataGrid.Items.Count)
+                        ResultsDataGrid.SelectedIndex = keepIndex;
+                    else
+                        ResultsDataGrid.SelectedIndex = -1;
                 }
-                else
+                if (ResultsListView != null)
                 {
-                    ResultsListView.SelectedIndex = -1;
+                    ResultsListView.SelectedItems.Clear();
+                    if (keepIndex >= 0 && keepIndex < ResultsListView.Items.Count)
+                        ResultsListView.SelectedIndex = keepIndex;
+                    else
+                        ResultsListView.SelectedIndex = -1;
                 }
             }
+
             UpdateDeleteCount();
+            StatusText.Text = $"Deleted {deleted} file(s)" + (failed > 0 ? $" ({failed} failed)" : "");
         }
 
         private void UnitComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -3184,14 +3560,53 @@ namespace DupFree.Views
             {
                 var toDelete = ResultsDataGrid.SelectedItems.Cast<FileItemViewModel>().ToList();
                 if (toDelete.Count == 0)
-                {
                     return;
+
+                if (toDelete.Count == 1)
+                {
+                    await DeleteFileAsync(toDelete[0]);
+                }
+                else
+                {
+                    // Batch delete: perform all deletions then refresh UI once
+                    if (Services.SettingsService.ConfirmDelete)
+                    {
+                        var result = MessageBox.Show(string.Format(Properties.Resources.ConfirmDeleteMultipleFormat, toDelete.Count), "Confirm delete", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+                        if (result != MessageBoxResult.Yes)
+                            return;
+                    }
+
+                    int keepIndex = ResultsDataGrid.SelectedIndex;
+                    foreach (var file in toDelete) AddToRecycleBin(file);
+
+                    var paths = toDelete.Select(f => f.FilePath).ToList();
+                    await Task.Run(() =>
+                    {
+                        foreach (var p in paths)
+                        {
+                            try { FileSystem.DeleteFile(p, UIOption.OnlyErrorDialogs, RecycleOption.SendToRecycleBin); }
+                            catch { try { File.Delete(p); } catch { } }
+                        }
+                    });
+
+                    var deletedPaths = new HashSet<string>(paths, StringComparer.OrdinalIgnoreCase);
+                    foreach (var group in _groupViewModels)
+                        group.Files.RemoveAll(f => deletedPaths.Contains(f.FilePath));
+                    _totalDeletedSize += toDelete.Where(f => deletedPaths.Contains(f.FilePath)).Sum(f => f.FileSize);
+                    _selectedGridItems.RemoveAll(f => deletedPaths.Contains(f.FilePath));
+                    _currentGridFiles.RemoveAll(f => deletedPaths.Contains(f.FilePath));
+                    _groupViewModels.RemoveAll(g => g.Files.Count <= 1);
+
+                    ApplySorting();
+                    ResultsDataGrid.ItemsSource = null;
+                    DisplayResults();
+                    UpdateFooterStats();
+                    UpdateDeleteCount();
+
+                    if (keepIndex >= 0 && keepIndex < ResultsDataGrid.Items.Count)
+                        ResultsDataGrid.SelectedIndex = keepIndex;
                 }
 
-                foreach (var file in toDelete.ToList())
-                {
-                    await DeleteFileAsync(file);
-                }
                 e.Handled = true;
             }
         }
@@ -3219,12 +3634,8 @@ namespace DupFree.Views
                     return;
                 }
 
-                foreach (var file in filesToDelete)
-                {
-#pragma warning disable CS4014
-                    DeleteFileAsync(file);
-#pragma warning restore CS4014
-                }
+                // Batch delete: fire-and-forget with single UI refresh
+                _ = BatchDeleteFilesAsync(filesToDelete);
                 e.Handled = true;
             }
             else if (e.Key == Key.Left || e.Key == Key.Right || e.Key == Key.Up || e.Key == Key.Down)
@@ -3413,7 +3824,6 @@ namespace DupFree.Views
 
                 SettingsService.SetMinFileSizeMB(minSize);
                 SettingsService.SetMaxFileSizeMB(maxSize);
-                SettingsService.SaveToFile();
 
                 MessageBox.Show(string.Format(Properties.Resources.FileSizeLimitsAppliedFormat,
                         (minSize == 0 ? "No limit" : minSize + " MB"),
@@ -3442,7 +3852,6 @@ namespace DupFree.Views
                 }
 
                 SettingsService.SetMaxDuplicatesToShow(maxDuplicates);
-                SettingsService.SaveToFile();
 
                 MessageBox.Show(string.Format(Properties.Resources.DuplicateLimitAppliedFormat,
                         (maxDuplicates == 0 ? "No limit" : maxDuplicates.ToString())),
@@ -3471,7 +3880,6 @@ namespace DupFree.Views
             {
                 int size = (int)GridPictureSizeSlider.Value;
                 SettingsService.SetGridPictureSize(size);
-                SettingsService.SaveToFile();
 
                 // Update the virtual grid dimensions
                 _virtualItemWidth = size + 56;  // size + panel padding + margins
@@ -3502,7 +3910,6 @@ namespace DupFree.Views
             {
                 bool showPath = ShowGridFilePathCheckBox.IsChecked ?? true;
                 SettingsService.SetShowGridFilePath(showPath);
-                SettingsService.SaveToFile();
 
                 // Update virtual item height based on setting
                 int gridSize = SettingsService.GridPictureSize;
@@ -3533,7 +3940,6 @@ namespace DupFree.Views
                 return;
 
             SettingsService.SetShowScanTimer(ShowScanTimerCheckBox.IsChecked == true);
-            SettingsService.SaveToFile();
         }
 
         private void SaveScanTimerButton_Click(object sender, RoutedEventArgs e)
@@ -3542,7 +3948,6 @@ namespace DupFree.Views
             {
                 bool showTimer = ShowScanTimerCheckBox.IsChecked ?? false;
                 SettingsService.SetShowScanTimer(showTimer);
-                SettingsService.SaveToFile();
                 MessageBox.Show(showTimer ? "Scan timer enabled. It will display during similar-image scans." : "Scan timer disabled.",
                     "Settings Saved", MessageBoxButton.OK, MessageBoxImage.Information);
             }
@@ -3558,7 +3963,6 @@ namespace DupFree.Views
                 return;
 
             SettingsService.SetEnableTelemetry(EnableTelemetryCheckBox.IsChecked == true);
-            SettingsService.SaveToFile();
         }
 
         private void SaveTelemetryButton_Click(object sender, RoutedEventArgs e)
@@ -3567,9 +3971,39 @@ namespace DupFree.Views
             {
                 bool enabled = EnableTelemetryCheckBox.IsChecked ?? false;
                 SettingsService.SetEnableTelemetry(enabled);
-                SettingsService.SaveToFile();
                 MessageBox.Show(enabled ? "Telemetry enabled. Anonymous performance data will be logged." : "Telemetry disabled.",
                     "Settings Saved", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Error saving setting: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        private void AutoPlayPreviewsCheckBox_Changed(object sender, RoutedEventArgs e)
+        {
+            if (AutoPlayPreviewsCheckBox == null)
+                return;
+
+            SettingsService.SetAutoPlayAnimatedPreviews(AutoPlayPreviewsCheckBox.IsChecked == true);
+
+            // If the user toggles this while results are already displayed, refresh the grid so the change takes effect immediately.
+            if (_currentViewMode == "grid")
+                DisplayResults();
+        }
+
+        private void SaveAutoPlayPreviewsButton_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                bool enabled = AutoPlayPreviewsCheckBox?.IsChecked == true;
+                SettingsService.SetAutoPlayAnimatedPreviews(enabled);
+                MessageBox.Show(enabled ? "Animated previews will auto-play." : "Animated previews will only play on hover.",
+                    "Settings Saved", MessageBoxButton.OK, MessageBoxImage.Information);
+
+                // Refresh to apply the new setting immediately in current view.
+                if (_currentViewMode == "grid")
+                    DisplayResults();
             }
             catch (Exception ex)
             {
@@ -3824,9 +4258,9 @@ namespace DupFree.Views
 
             var image = new Image
             {
-                Width = gridSize,
-                Height = gridSize,
-                Stretch = Stretch.UniformToFill,
+                MaxWidth = gridSize,
+                MaxHeight = gridSize,
+                Stretch = Stretch.Uniform,
                 HorizontalAlignment = HorizontalAlignment.Center,
                 Margin = new Thickness(0, 0, 0, 8),
                 IsHitTestVisible = false
@@ -3989,6 +4423,10 @@ namespace DupFree.Views
                     }
                 }
 
+                // Clear any cached selection state to avoid stale references
+                _selectedRecycleBinItems.Clear();
+
+                // Refresh UI after changes
                 DisplayRecycleBinResults();
 
                 if (failedFiles.Count > 0)
@@ -4001,16 +4439,6 @@ namespace DupFree.Views
                 {
                     MessageBox.Show($"Successfully restored {successCount} file(s).", "Restore Complete", MessageBoxButton.OK, MessageBoxImage.Information);
                 }
-            }
-
-            if (result == MessageBoxResult.Yes)
-            {
-                foreach (var item in selectedItems)
-                {
-                    _recycleBin.Remove(item);
-                }
-
-                UpdateRecycleBinDisplay();
             }
         }
 

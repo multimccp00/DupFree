@@ -125,12 +125,13 @@ DupFree/
 - Custom control templates for: Button (5 variants), CheckBox, ComboBox, DataGrid, ScrollBar, TextBox, Window
 - Color palette matches React/Tailwind dark design conventions
 
-### MainWindow
-- **Dark title bar** via DWM API (`DwmSetWindowAttribute`)
-- **Sidebar**: 6 toggle buttons controlling panel visibility
-- **Panels**: Scan, Results, Similar Images, Recycle Bin, Settings, Help
-- **View modes**: DataGrid (list) and WrapPanel/Canvas (grid with virtual scrolling)
-- **Keyboard navigation**: Arrow keys, Enter, Delete in grid view
+### MainWindow (Views/MainWindow.xaml.cs)
+- **Sidebar + panel navigation** — `ShowPanel()` switches between Scan, Results, Similar Images, Recycle Bin, Settings, Help
+- **Duplicate file grid** — `DataGrid` (list) or `WrapPanel`/`Canvas` virtual grid (grid view)
+- **GIF animation** — `DispatcherTimer` at `DispatcherPriority.Background` drives frame stepping from Magick.NET-decoded frame cache. `animationActive`/`autoPlayStarted`/`gridLoaded` flags prevent double-start and slot leaks
+- **Video preview** — `MediaElement` with `MediaEnded` looping, `videoFailed` guard for broken files, LRU eviction via `_videoPreviewStoppers: List<Action>` (cap: `MaxConcurrentVideoPreviews = 6`)
+- **Viewport gating** — `IsTileInViewport()` via `TransformToAncestor` + `ScrollChangedEventHandler` stops off-screen media automatically
+- **Keyboard navigation** — Arrow keys, Enter, Delete in grid view
 
 ### SimilarImagesPanel (UserControl)
 - Similarity slider (75–99%) with custom round thumb template

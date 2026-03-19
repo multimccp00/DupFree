@@ -166,7 +166,7 @@ namespace DupFree.Models
             }
         }
 
-        public long TotalWastedSpace => (Files.Count - 1) * Files[0].FileSize;
+        public long TotalWastedSpace => Files.Count > 0 ? (Files.Count - 1) * Files[0].FileSize : 0;
         public string TotalWastedSpaceFormatted => Services.ImagePreviewService.FormatFileSize(TotalWastedSpace);
 
         public int DupCount => Files?.Count ?? 0;

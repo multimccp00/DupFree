@@ -121,6 +121,7 @@ namespace DupFree.Views
                 }
             }
 
+            _scanCancellation?.Dispose();
             _scanCancellation = new CancellationTokenSource();
             _isScanning = true;
             ScanSimilarButton.Content = "Stop";
@@ -302,10 +303,13 @@ namespace DupFree.Views
         private void KeepUncompressedFormats(List<FileItemViewModel> images, HashSet<FileItemViewModel> imagesToKeep)
         {
             var uncompressed = new[] { ".bmp", ".tiff", ".tif", ".png" };
-            var toRemove = images.Where(img => !uncompressed.Contains(Path.GetExtension(img.FilePath).ToLower())).ToList();
-            foreach (var img in toRemove)
+            var uncompressedImages = images.Where(img => uncompressed.Contains(Path.GetExtension(img.FilePath).ToLower())).ToList();
+            if (uncompressedImages.Count > 0)
             {
-                imagesToKeep.Remove(img);
+                // Add all uncompressed-format images to the keep set
+                foreach (var img in uncompressedImages) imagesToKeep.Add(img);
+                // Remove compressed-format images that are not themselves uncompressed
+                foreach (var img in images.Except(uncompressedImages)) imagesToKeep.Remove(img);
             }
         }
 
@@ -313,19 +317,26 @@ namespace DupFree.Views
         {
             try
             {
-                var imageData = images.Select(img => (
-                    Image: img,
-                    Bitmap: new BitmapImage() { UriSource = new Uri(img.FilePath), CacheOption = BitmapCacheOption.OnLoad }
-                )).ToList();
+                var imageData = images.Select(img =>
+                {
+                    var bmp = new BitmapImage();
+                    bmp.BeginInit();
+                    bmp.UriSource = new Uri(img.FilePath);
+                    bmp.CacheOption = BitmapCacheOption.OnLoad;
+                    bmp.EndInit();
+                    bmp.Freeze();
+                    return (Image: img, Bitmap: bmp);
+                }).ToList();
 
                 if (imageData.Count == 0) return;
 
-                var maxResolution = imageData.Max(x => x.Bitmap.Width * x.Bitmap.Height);
-                var imagesToRemove = imageData.Where(x => (x.Bitmap.Width * x.Bitmap.Height) < maxResolution).ToList();
-
-                foreach (var imgData in imagesToRemove)
+                var maxResolution = imageData.Max(x => x.Bitmap.PixelWidth * x.Bitmap.PixelHeight);
+                foreach (var imgData in imageData)
                 {
-                    imagesToKeep.Remove(imgData.Image);
+                    if ((imgData.Bitmap.PixelWidth * imgData.Bitmap.PixelHeight) >= maxResolution)
+                        imagesToKeep.Add(imgData.Image);
+                    else
+                        imagesToKeep.Remove(imgData.Image);
                 }
             }
             catch { }
@@ -334,10 +345,12 @@ namespace DupFree.Views
         private void KeepLargerFilesize(List<FileItemViewModel> images, HashSet<FileItemViewModel> imagesToKeep)
         {
             var maxSize = images.Max(img => img.FileSize);
-            var imagesToRemove = images.Where(img => img.FileSize < maxSize).ToList();
-            foreach (var img in imagesToRemove)
+            foreach (var img in images)
             {
-                imagesToKeep.Remove(img);
+                if (img.FileSize >= maxSize)
+                    imagesToKeep.Add(img);
+                else
+                    imagesToKeep.Remove(img);
             }
         }
 

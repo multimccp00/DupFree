@@ -221,3 +221,29 @@ All write crash details to `%TEMP%/dupfree_crash.log`.
 | Hash caching | JSON file | Only recomputes modified files |
 | UI rendering | Virtual grid for >1000 items | Canvas with on-demand rendering |
 | Thumbnail loading | Async with semaphore (4 concurrent) | BitmapImage with Freeze() |
+| GIF animation | `DispatcherTimer` at `DispatcherPriority.Background` | Zero cross-thread marshaling; WPF-throttled; up to 16 concurrent |
+| Video preview | `MediaElement` with `MediaEnded` looping | LRU eviction; max 6 concurrent decoders |
+| Viewport gating | `TransformToAncestor` + `Rect.IntersectsWith` | `ScrollChangedEventHandler` per tile stops off-screen media immediately |
+
+---
+
+## Media Preview Architecture
+
+### GIF Animation
+GIF frames are decoded by Magick.NET into a per-tile frame cache. Animation is driven by a `DispatcherTimer` fired at `DispatcherPriority.Background` using each frame's delay from the GIF metadata. This replaces the earlier `Task.Run + Dispatcher.Invoke` approach, which caused ~192 synchronous UI-thread marshals per second with 16 GIFs active. The `DispatcherTimer` approach requires zero additional threads and is automatically throttled by WPF when the application is busy.
+
+An `animationActive` flag (set on first hover, cleared on `Unloaded`) prevents double-start from both the `Loaded` event and `PropertyChanged` auto-play trigger. A `gifAnimCts` null guard prevents re-entrant GIF loops on rapid hover.
+
+### Video Preview
+Videos are played via `MediaElement` in a hidden layer that becomes visible on hover. A `MediaEnded` handler resets `Position = TimeSpan.Zero` and calls `Play()` for seamless looping. A `videoFailed` boolean is set on `MediaFailed` to prevent retry loops on genuinely broken files, and is reset on `grid.Unloaded` so that re-loading the tile gives a fresh attempt.
+
+LRU eviction is implemented via a `_videoPreviewStoppers: List<Action>` field on the window. Each tile that starts video playback appends a stop-action to the list. When the list would exceed `MaxConcurrentVideoPreviews = 6`, the oldest entry (index 0) is invoked and removed before the new one is added.
+
+### Viewport Gating
+`IsTileInViewport(FrameworkElement grid)` computes the tile's bounding rect in `ResultsScrollViewer` coordinates using `TransformToAncestor` and checks `Rect.IntersectsWith(viewport)`. This check is performed:
+
+1. Before starting any GIF animation or video (skips tiles already off-screen)
+2. On every `DispatcherTimer` tick (stops the timer if the tile has scrolled away)
+3. In the `PropertyChanged` auto-play handler
+
+A `ScrollChangedEventHandler viewportStopper` is attached to `ResultsScrollViewer` for each active tile. It calls `IsTileInViewport` and immediately stops the GIF timer or video if the tile is no longer visible. The handler is detached in the tile's `Unloaded` handler to prevent leaks.

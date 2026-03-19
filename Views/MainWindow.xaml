@@ -454,6 +454,21 @@
                                     </StackPanel>
                                 </Border>
 
+                                <!-- Preview autoplay section -->
+                                <Border Background="{DynamicResource CardBackground}" CornerRadius="8" Padding="20" Margin="0,0,0,16">
+                                    <StackPanel>
+                                        <TextBlock Text="Preview Playback" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,12" />
+                                        <TextBlock Text="When enabled, animated GIFs/WebP and video previews will start playing automatically, without requiring a mouse hover." Foreground="{DynamicResource MutedForeground}" Margin="0,0,0,16" TextWrapping="Wrap" />
+
+                                        <CheckBox Name="AutoPlayPreviewsCheckBox" Content="Auto-play animated previews" Margin="0,0,0,16"
+                                                  Style="{StaticResource SettingsCheckBox}" VerticalAlignment="Center" Checked="AutoPlayPreviewsCheckBox_Changed" Unchecked="AutoPlayPreviewsCheckBox_Changed" />
+
+                                        <Button Name="SaveAutoPlayPreviewsButton" Click="SaveAutoPlayPreviewsButton_Click" Style="{StaticResource PrimaryButton}" Padding="16,10" HorizontalAlignment="Left">
+                                            Apply Setting
+                                        </Button>
+                                    </StackPanel>
+                                </Border>
+
                                 <!-- Recycle Bin Size Section -->
                                 <Border Background="{DynamicResource CardBackground}" CornerRadius="8" Padding="20" Margin="0,0,0,16">
                                     <StackPanel>
@@ -502,9 +517,7 @@
                                 </Border>
 
                                 <!-- Reset all settings to their default values -->
-                                <Button Name="ResetSettingsButton" Click="ResetSettingsButton_Click" Style="{StaticResource PrimaryButton}" Margin="0,8,0,24" Padding="16,10" HorizontalAlignment="Left">
-                                    {x:Static properties:Resources.ResetToDefaults}
-                                </Button>
+                                <Button Name="ResetSettingsButton" Click="ResetSettingsButton_Click" Style="{StaticResource PrimaryButton}" Margin="0,8,0,24" Padding="16,10" HorizontalAlignment="Left" Content="{x:Static properties:Resources.ResetToDefaults}" />
 
                                 
                             </StackPanel>
@@ -535,13 +548,21 @@
                                     <TextBlock Text="4. Review Results" FontSize="14" FontWeight="SemiBold" Margin="0,0,0,8" />
                                     <TextBlock Text="Once scanning completes, results appear in the main view. Use the toggle button to switch between List view (showing details) and Grid view (showing image previews). Use the search box to filter results by filename." 
                                                TextWrapping="Wrap" Foreground="{DynamicResource MutedForeground}" Margin="0,0,0,16" LineHeight="20" />
+
+                                    <TextBlock Text="5. Animated Previews in Grid View" FontSize="14" FontWeight="SemiBold" Margin="0,0,0,8" />
+                                    <TextBlock Text="In Grid view, hover over any GIF or video file to start playback. GIFs animate frame-by-frame at their natural speed. Videos loop continuously. Up to 16 GIFs and 6 videos can play at the same time — when a 7th video starts, the oldest one stops. Animations pause automatically when a tile scrolls off-screen, keeping the app fast even with large result sets." 
+                                               TextWrapping="Wrap" Foreground="{DynamicResource MutedForeground}" Margin="0,0,0,16" LineHeight="20" />
                                     
-                                    <TextBlock Text="5. Select and Delete Duplicates" FontSize="14" FontWeight="SemiBold" Margin="0,0,0,8" />
+                                    <TextBlock Text="6. Select and Delete Duplicates" FontSize="14" FontWeight="SemiBold" Margin="0,0,0,8" />
                                     <TextBlock Text="Click on individual files to select them, or use 'Select All' to choose all results. Click the 'Delete Selected' button to remove the chosen duplicates. Files are safely moved to the Recycle Bin. The space saved will be shown in the storage indicator." 
                                                TextWrapping="Wrap" Foreground="{DynamicResource MutedForeground}" Margin="0,0,0,16" LineHeight="20" />
                                     
-                                    <TextBlock Text="6. Customize Settings" FontSize="14" FontWeight="SemiBold" Margin="0,0,0,8" />
-                                    <TextBlock Text="Click 'Settings' in the sidebar to configure additional options: set custom file size limits, limit the number of duplicates displayed, and adjust the grid view thumbnail size." 
+                                    <TextBlock Text="7. Find Similar Images" FontSize="14" FontWeight="SemiBold" Margin="0,0,0,8" />
+                                    <TextBlock Text="Click 'Similar Images' in the sidebar. Adjust the similarity threshold slider (75–99%) and click Scan. Groups of visually similar images appear with thumbnails. Use the Auto-Select checkboxes to automatically mark lower-quality versions: keep the highest resolution, prefer uncompressed formats (BMP/TIFF), or keep the largest file. Then click Delete Selected to remove the marked copies." 
+                                               TextWrapping="Wrap" Foreground="{DynamicResource MutedForeground}" Margin="0,0,0,16" LineHeight="20" />
+                                    
+                                    <TextBlock Text="8. Customize Settings" FontSize="14" FontWeight="SemiBold" Margin="0,0,0,8" />
+                                    <TextBlock Text="Click 'Settings' in the sidebar to configure additional options: set custom file size limits, limit the number of duplicates displayed, adjust the grid view thumbnail size, and toggle the delete confirmation dialog." 
                                                TextWrapping="Wrap" Foreground="{DynamicResource MutedForeground}" LineHeight="20" />
                                 </StackPanel>
                             </Border>
@@ -551,17 +572,25 @@
                                 <StackPanel>
                                     <TextBlock Text="About DupFree" FontSize="20" FontWeight="SemiBold" Margin="0,0,0,16" />
                                     
-                                    <TextBlock Text="DupFree is a fast and intuitive duplicate file finder that helps you reclaim disk space by identifying and removing duplicate files on your computer." 
+                                    <TextBlock Text="DupFree is a fast and intuitive duplicate file finder that helps you reclaim disk space by identifying and removing duplicate files on your computer. It supports animated GIF and video previews directly in the results grid, with viewport-aware playback that stops off-screen media automatically to keep the app responsive." 
                                                TextWrapping="Wrap" Foreground="{DynamicResource MutedForeground}" Margin="0,0,0,16" LineHeight="20" />
                                     
                                     <TextBlock Text="Features:" FontSize="14" FontWeight="SemiBold" Margin="0,0,0,8" />
-                                    <TextBlock Text="• Select folders to scan for duplicates" 
+                                    <TextBlock Text="• Duplicate file detection by name + size" 
+                                               Foreground="{DynamicResource MutedForeground}" Margin="0,0,0,4" />
+                                    <TextBlock Text="• Similar image detection with GPU-accelerated SSIM (perceptual hashing)" 
                                                Foreground="{DynamicResource MutedForeground}" Margin="0,0,0,4" />
                                     <TextBlock Text="• Filter by minimum file size" 
                                                Foreground="{DynamicResource MutedForeground}" Margin="0,0,0,4" />
                                     <TextBlock Text="• Grid and list view with image previews" 
                                                Foreground="{DynamicResource MutedForeground}" Margin="0,0,0,4" />
-                                    <TextBlock Text="• Safe deletion to Recycle Bin" 
+                                    <TextBlock Text="• Animated GIF and video previews on hover (viewport-aware, looping)" 
+                                               Foreground="{DynamicResource MutedForeground}" Margin="0,0,0,4" />
+                                    <TextBlock Text="• LRU video eviction: up to 6 simultaneous video decoders" 
+                                               Foreground="{DynamicResource MutedForeground}" Margin="0,0,0,4" />
+                                    <TextBlock Text="• Auto-select lower-quality similar images (resolution, format, filesize)" 
+                                               Foreground="{DynamicResource MutedForeground}" Margin="0,0,0,4" />
+                                    <TextBlock Text="• Safe deletion to Recycle Bin with in-app restore" 
                                                Foreground="{DynamicResource MutedForeground}" Margin="0,0,0,4" />
                                     <TextBlock Text="• Customizable settings and display options" 
                                                Foreground="{DynamicResource MutedForeground}" Margin="0,0,0,20" />

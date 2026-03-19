@@ -293,7 +293,7 @@ namespace DupFree.Services
                 SHCreateItemFromParsingName(filePath, IntPtr.Zero, ref riid, out IShellItemImageFactory factory);
                 var size = new SIZE { cx = width, cy = height };
                 factory.GetImage(size, SIIGBF.SIIGBF_RESIZETOFIT, out IntPtr hBmp);
-                var bmpSource = Imaging.CreateBitmapSourceFromHBitmap(hBmp, IntPtr.Zero, Int32Rect.Empty, BitmapSizeOptions.FromWidthAndHeight(width, height));
+                var bmpSource = Imaging.CreateBitmapSourceFromHBitmap(hBmp, IntPtr.Zero, Int32Rect.Empty, BitmapSizeOptions.FromEmptyOptions());
                 DeleteObject(hBmp);
 
                 // Convert to BitmapImage so callers can assign to existing BitmapImage properties.

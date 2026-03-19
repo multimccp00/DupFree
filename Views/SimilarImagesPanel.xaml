@@ -164,7 +164,7 @@
                                                     </Style>
                                                 </Border.Style>
                                                 <Grid>
-                                                    <Image Source="{Binding Thumbnail}" Stretch="UniformToFill" />
+                                                    <Image Source="{Binding Thumbnail}" Stretch="Uniform" />
                                                     <Border Name="SelectedOverlay" Background="#66FF0000" CornerRadius="4" Visibility="Collapsed" IsHitTestVisible="False" />
                                                 </Grid>
                                                 <Border.ToolTip>

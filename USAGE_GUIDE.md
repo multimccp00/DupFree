@@ -72,6 +72,11 @@ The sidebar footer shows the selected drive's volume label, letter, and a usage 
 - Thumbnail size is configurable in Settings (100–300px)
 - Toggle between views using the view button in the action bar
 
+#### Animated Previews (Grid View)
+- **GIF files**: Hover over a tile to start frame animation. The animation loops until you move the mouse away or the tile scrolls off-screen. Up to **16 GIFs** can animate simultaneously
+- **Video files** (MP4, etc.): Hover to start video playback. Video loops continuously via the `MediaEnded` event. Up to **6 videos** play simultaneously — when a 7th starts, the oldest is automatically stopped (LRU eviction)
+- **Viewport gating**: All animations and videos pause automatically when the tile scrolls out of the visible area, saving CPU and GPU resources. They resume the next time you hover
+
 ### Navigation
 - **Arrow keys**: Navigate between grid items
 - **Enter**: Open selected file in Windows Explorer

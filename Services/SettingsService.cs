@@ -48,6 +48,9 @@ namespace DupFree.Services
         // Optional telemetry & timing statistics (anonymous, recorded in log when enabled)
         public static bool EnableTelemetry { get; private set; } = false;
 
+        // Automatically play animated previews (GIF/WebP and video) without requiring hover.
+        public static bool AutoPlayAnimatedPreviews { get; private set; } = false;
+
         // Maximum number of items to keep in the recycle bin
         public static int MaxRecycleBinSize { get; private set; } = 30;
 
@@ -70,6 +73,7 @@ namespace DupFree.Services
             AutoSelectKeepLargerFilesize = false;
             ShowScanTimer = false;
             EnableTelemetry = false;
+            AutoPlayAnimatedPreviews = false;
             MaxRecycleBinSize = 30;
             OnSettingsChanged?.Invoke();
             SaveToFile();
@@ -174,6 +178,16 @@ namespace DupFree.Services
 
         public static bool GetEnableTelemetry() => EnableTelemetry;
 
+        /// <summary>Enable or disable automatic playback of animated previews (GIF/WebP and video).</summary>
+        public static void SetAutoPlayAnimatedPreviews(bool enable)
+        {
+            AutoPlayAnimatedPreviews = enable;
+            OnSettingsChanged?.Invoke();
+            SaveToFile();
+        }
+
+        public static bool GetAutoPlayAnimatedPreviews() => AutoPlayAnimatedPreviews;
+
         public static void SetMaxRecycleBinSize(int size)
         {
             MaxRecycleBinSize = Math.Max(0, size);
@@ -216,6 +230,7 @@ namespace DupFree.Services
                     AutoSelectKeepLargerFilesize,
                     ShowScanTimer,
                     EnableTelemetry,
+                    AutoPlayAnimatedPreviews,
                     MaxRecycleBinSize,
 
                 };
@@ -236,7 +251,7 @@ namespace DupFree.Services
                     return;
 
                 var json = File.ReadAllText(filePath);
-                var doc = JsonDocument.Parse(json);
+                using var doc = JsonDocument.Parse(json);
                 var root = doc.RootElement;
 
                 if (root.TryGetProperty("SizeUnit", out var sizeUnit))
@@ -280,6 +295,9 @@ namespace DupFree.Services
 
                 if (root.TryGetProperty("EnableTelemetry", out var telemetry))
                     EnableTelemetry = telemetry.GetBoolean();
+
+                if (root.TryGetProperty("AutoPlayAnimatedPreviews", out var autoPlay))
+                    AutoPlayAnimatedPreviews = autoPlay.GetBoolean();
 
                 if (root.TryGetProperty("MaxRecycleBinSize", out var maxBinSize))
                     MaxRecycleBinSize = Math.Max(0, maxBinSize.GetInt32());

@@ -8,10 +8,13 @@ A Windows desktop application for finding duplicate files and visually similar i
 - **Similar Image Detection** — Perceptual hashing + GPU-accelerated SSIM comparison
 - **Dark Theme UI** — Modern dark interface with collapsible sidebar navigation
 - **Multiple View Modes** — List (DataGrid) and Grid (thumbnail) views
+- **Animated Previews** — GIF and video (MP4, etc.) thumbnails auto-play on hover in grid view, with seamless looping
+- **Viewport-Aware Playback** — Animations and videos automatically stop when scrolled off-screen to save CPU/GPU resources
+- **Smart Resource Management** — LRU video eviction (up to 6 concurrent decoders); DispatcherTimer-based GIF animation (zero cross-thread overhead, WPF-throttled)
 - **In-App Recycle Bin** — Delete with undo via restore functionality
 - **Persistent Settings** — Preferences saved to `%AppData%/DupFree/settings.json`
 - **Search & Filter** — Filter by filename, minimum size, and scan limits
-- **Auto-Select** — Automatically mark lower-quality similar images for deletion
+- **Auto-Select** — Automatically mark lower-quality similar images for deletion (keep highest resolution, uncompressed formats, or largest filesize)
 
 ## Requirements
 
