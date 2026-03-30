@@ -1,9 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
+using Vortice.D3DCompiler;
+using Vortice.Direct3D;
 using Vortice.Direct3D11;
 using Vortice.DXGI;
-using Vortice.Direct3D;
-using Vortice.D3DCompiler;
 using static Vortice.Direct3D11.D3D11;
 
 namespace DupFree.Services
@@ -14,16 +15,15 @@ namespace DupFree.Services
     /// </summary>
     public class GpuSsim : IDisposable
     {
+        public const int MaxBatchPairs = 1024;
+
         private ID3D11Device? _device;
         private ID3D11DeviceContext? _ctx;
         private ID3D11ComputeShader? _cs;
+        private ID3D11ComputeShader? _batchedCs;
         private bool _initialized;
         private readonly object _gpuLock = new();
 
-        // ── HLSL compute shader ──────────────────────────────────────────
-        // Each thread accumulates partial sums for a strided chunk of
-        // pixels.  Output is 5 floats per thread: sumA, sumB, sumA²,
-        // sumB², sumAB.  The host reduces them and computes global SSIM.
         private const string HlslSource = @"
 cbuffer Params : register(b0)
 {
@@ -67,40 +67,84 @@ void CSMain(uint3 DTid : SV_DispatchThreadID)
 }
 ";
 
-        /// <summary>Create D3D11 device and compile compute shader.</summary>
+        private const string HlslBatchedSource = @"
+cbuffer Params : register(b0)
+{
+    uint PixelCount;
+    uint PairCount;
+};
+
+StructuredBuffer<float>   bufA   : register(t0);
+StructuredBuffer<float>   bufB   : register(t1);
+RWStructuredBuffer<float> outBuf : register(u0);
+
+[numthreads(64, 1, 1)]
+void CSMain(uint3 DTid : SV_DispatchThreadID)
+{
+    uint tid = DTid.x;
+    uint pair = DTid.y;
+    if (pair >= PairCount || tid >= 64) return;
+
+    float sA  = 0.0f;
+    float sB  = 0.0f;
+    float sA2 = 0.0f;
+    float sB2 = 0.0f;
+    float sAB = 0.0f;
+    uint baseOffset = pair * PixelCount;
+
+    for (uint i = tid; i < PixelCount; i += 64)
+    {
+        float a = bufA[baseOffset + i];
+        float b = bufB[baseOffset + i];
+        sA  += a;
+        sB  += b;
+        sA2 += a * a;
+        sB2 += b * b;
+        sAB += a * b;
+    }
+
+    uint o = (pair * 64u + tid) * 5u;
+    outBuf[o     ] = sA;
+    outBuf[o + 1u] = sB;
+    outBuf[o + 2u] = sA2;
+    outBuf[o + 3u] = sB2;
+    outBuf[o + 4u] = sAB;
+}
+";
+
         public bool Init()
         {
             try
             {
-                // 1. Create D3D11 hardware device
                 var hr = D3D11CreateDevice(
-                    null!, DriverType.Hardware,
-                    DeviceCreationFlags.None, null!,
-                    out _device, out _ctx);
+                    null!,
+                    DriverType.Hardware,
+                    DeviceCreationFlags.None,
+                    null!,
+                    out _device,
+                    out _ctx);
                 if (hr.Failure)
                 {
                     Log.Error("GpuSsim: D3D11CreateDevice failed");
                     return false;
                 }
 
-                // 2. Compile HLSL → bytecode via Vortice.D3DCompiler
-                byte[] bytecode;
+                ReadOnlyMemory<byte> compiled = Compiler.Compile(HlslSource, "CSMain", "ssim.hlsl", "cs_5_0");
+                _cs = _device.CreateComputeShader(compiled.ToArray());
+
                 try
                 {
-                    ReadOnlyMemory<byte> compiled = Compiler.Compile(
-                        HlslSource, "CSMain", "ssim.hlsl", "cs_5_0");
-                    bytecode = compiled.ToArray();
+                    ReadOnlyMemory<byte> compiledBatched = Compiler.Compile(HlslBatchedSource, "CSMain", "ssim_batched.hlsl", "cs_5_0");
+                    _batchedCs = _device.CreateComputeShader(compiledBatched.ToArray());
                 }
                 catch (Exception ex)
                 {
-                    Log.Error($"GpuSsim: shader compile failed – {ex.Message}");
-                    return false;
+                    _batchedCs = null;
+                    Log.Error($"GpuSsim: batched shader compile failed – {ex.Message}");
                 }
 
-                // 3. Create compute shader
-                _cs = _device.CreateComputeShader(bytecode);
                 _initialized = true;
-                Log.Info($"GpuSsim: ready ({bytecode.Length} B shader)");
+                Log.Info("GpuSsim: ready");
                 return true;
             }
             catch (Exception ex)
@@ -110,11 +154,6 @@ void CSMain(uint3 DTid : SV_DispatchThreadID)
             }
         }
 
-        /// <summary>
-        /// Compute SSIM between two grayscale float[] images on the GPU.
-        /// Falls back to CPU SIMD when the GPU path is unavailable.
-        /// Thread-safe.
-        /// </summary>
         public double ComputeSsimGpu(float[] a, float[] b, int w, int h)
         {
             if (!_initialized) return ComputeSsimCpuFallback(a, b, w, h);
@@ -123,7 +162,6 @@ void CSMain(uint3 DTid : SV_DispatchThreadID)
             if (n == 0 || a.Length < n || b.Length < n) return 0.0;
 
             const int kGroup = 64;
-            // Use enough groups so each thread handles ~64 pixels
             int numGroups = Math.Clamp((n + kGroup * 64 - 1) / (kGroup * 64), 1, 256);
             int numThreads = numGroups * kGroup;
             int outCount = numThreads * 5;
@@ -138,100 +176,25 @@ void CSMain(uint3 DTid : SV_DispatchThreadID)
                 var pinB = GCHandle.Alloc(b, GCHandleType.Pinned);
                 try
                 {
-                    // ── Input structured buffers ─────────────────────────
-                    var inDesc = new BufferDescription(
-                        sizeof(float) * n,
-                        BindFlags.ShaderResource,
-                        ResourceUsage.Default,
-                        CpuAccessFlags.None,
-                        ResourceOptionFlags.BufferStructured,
-                        sizeof(float));
-
-                    using var gpuA = device.CreateBuffer(inDesc,
-                                        new SubresourceData(pinA.AddrOfPinnedObject()));
-                    using var gpuB = device.CreateBuffer(inDesc,
-                                        new SubresourceData(pinB.AddrOfPinnedObject()));
-
+                    using var gpuA = CreateStructuredInputBuffer(device, sizeof(float) * n, pinA.AddrOfPinnedObject());
+                    using var gpuB = CreateStructuredInputBuffer(device, sizeof(float) * n, pinB.AddrOfPinnedObject());
                     using var srvA = device.CreateShaderResourceView(gpuA);
                     using var srvB = device.CreateShaderResourceView(gpuB);
-
-                    // ── Output buffer (5 floats per thread) ──────────────
-                    var outDesc = new BufferDescription(
-                        sizeof(float) * outCount,
-                        BindFlags.UnorderedAccess,
-                        ResourceUsage.Default,
-                        CpuAccessFlags.None,
-                        ResourceOptionFlags.BufferStructured,
-                        sizeof(float));
-                    using var outBuf = device.CreateBuffer(outDesc);
+                    using var outBuf = CreateStructuredOutputBuffer(device, outCount);
                     using var uav = device.CreateUnorderedAccessView(outBuf);
+                    using var cb = CreateParamsBuffer(device, (uint)n, (uint)numThreads);
+                    using var staging = CreateReadbackBuffer(device, outCount);
 
-                    // ── Constant buffer (16-byte aligned) ────────────────
-                    var cbBytes = new byte[16];
-                    BitConverter.TryWriteBytes(cbBytes.AsSpan(0, 4), (uint)n);
-                    BitConverter.TryWriteBytes(cbBytes.AsSpan(4, 4), (uint)numThreads);
-                    var cbPin = GCHandle.Alloc(cbBytes, GCHandleType.Pinned);
-                    using var cb = device.CreateBuffer(
-                        new BufferDescription(16, BindFlags.ConstantBuffer,
-                            ResourceUsage.Default, CpuAccessFlags.None,
-                            ResourceOptionFlags.None, 0),
-                        new SubresourceData(cbPin.AddrOfPinnedObject()));
-                    cbPin.Free();
-
-                    // ── Staging buffer for readback ──────────────────────
-                    using var staging = device.CreateBuffer(
-                        new BufferDescription(
-                            sizeof(float) * outCount,
-                            BindFlags.None,
-                            ResourceUsage.Staging,
-                            CpuAccessFlags.Read,
-                            ResourceOptionFlags.None, 0));
-
-                    // ── Dispatch ─────────────────────────────────────────
                     ctx.CSSetShader(cs);
                     ctx.CSSetShaderResources(0, new ID3D11ShaderResourceView[] { srvA!, srvB! });
                     ctx.CSSetUnorderedAccessViews(0, new ID3D11UnorderedAccessView[] { uav! });
                     ctx.CSSetConstantBuffer(0, cb);
                     ctx.Dispatch(numGroups, 1, 1);
 
-                    // ── Readback ─────────────────────────────────────────
                     ctx.CopyResource(staging, outBuf);
-                    var mapped = ctx.Map(staging, 0, MapMode.Read, Vortice.Direct3D11.MapFlags.None);
-                    var vals = new float[outCount];
-                    Marshal.Copy(mapped.DataPointer, vals, 0, outCount);
-                    ctx.Unmap(staging, 0);
-
-                    // ── Unbind ───────────────────────────────────────────
-                    ctx.CSSetShader((ID3D11ComputeShader?)null);
-                    ctx.CSSetShaderResources(0, new ID3D11ShaderResourceView[] { (ID3D11ShaderResourceView)null!, (ID3D11ShaderResourceView)null! });
-                    ctx.CSSetUnorderedAccessViews(0, new ID3D11UnorderedAccessView[] { (ID3D11UnorderedAccessView)null! });
-
-                    // ── CPU reduce + SSIM ────────────────────────────────
-                    double sA = 0, sB = 0, sA2 = 0, sB2 = 0, sAB = 0;
-                    for (int t = 0; t < numThreads; t++)
-                    {
-                        int o = t * 5;
-                        sA += vals[o];
-                        sB += vals[o + 1];
-                        sA2 += vals[o + 2];
-                        sB2 += vals[o + 3];
-                        sAB += vals[o + 4];
-                    }
-
-                    double muA = sA / n, muB = sB / n;
-                    double varA = sA2 / n - muA * muA;
-                    double varB = sB2 / n - muB * muB;
-                    double cov = sAB / n - muA * muB;
-
-                    const double K1 = 0.01, K2 = 0.03, L = 255.0;
-                    double C1 = (K1 * L) * (K1 * L);
-                    double C2 = (K2 * L) * (K2 * L);
-                    double num = (2.0 * muA * muB + C1) * (2.0 * cov + C2);
-                    double den = (muA * muA + muB * muB + C1) * (varA + varB + C2);
-                    if (den <= 0) return 0.0;
-                    double ssim = num / den;
-                    if (double.IsNaN(ssim) || double.IsInfinity(ssim)) return 0.0;
-                    return Math.Clamp(ssim, 0.0, 1.0);
+                    float[] vals = ReadBackFloatBuffer(ctx, staging, outCount);
+                    ClearBindings(ctx);
+                    return ReduceSsim(vals, numThreads, n);
                 }
                 finally
                 {
@@ -241,7 +204,82 @@ void CSMain(uint3 DTid : SV_DispatchThreadID)
             }
         }
 
-        /// <summary>CPU SIMD fallback for SSIM.</summary>
+        public double[] ComputeSsimGpuBatched(List<(float[] a, float[] b)> pairs, int w, int h)
+        {
+            if (pairs.Count == 0)
+                return Array.Empty<double>();
+
+            if (!_initialized || _batchedCs == null || pairs.Count > MaxBatchPairs)
+            {
+                double[] fallback = new double[pairs.Count];
+                for (int index = 0; index < pairs.Count; index++)
+                {
+                    fallback[index] = ComputeSsimGpu(pairs[index].a, pairs[index].b, w, h);
+                }
+                return fallback;
+            }
+
+            int pixelCount = w * h;
+            for (int index = 0; index < pairs.Count; index++)
+            {
+                if (pairs[index].a.Length < pixelCount || pairs[index].b.Length < pixelCount)
+                    return BuildFallbackBatch(pairs, w, h);
+            }
+
+            int pairCount = pairs.Count;
+            int totalPixelCount = pixelCount * pairCount;
+            float[] mergedA = new float[totalPixelCount];
+            float[] mergedB = new float[totalPixelCount];
+            for (int index = 0; index < pairCount; index++)
+            {
+                Array.Copy(pairs[index].a, 0, mergedA, index * pixelCount, pixelCount);
+                Array.Copy(pairs[index].b, 0, mergedB, index * pixelCount, pixelCount);
+            }
+
+            lock (_gpuLock)
+            {
+                var device = _device!;
+                var ctx = _ctx!;
+                var pinA = GCHandle.Alloc(mergedA, GCHandleType.Pinned);
+                var pinB = GCHandle.Alloc(mergedB, GCHandleType.Pinned);
+                try
+                {
+                    int threadsPerPair = 64;
+                    int outCount = pairCount * threadsPerPair * 5;
+                    using var gpuA = CreateStructuredInputBuffer(device, sizeof(float) * totalPixelCount, pinA.AddrOfPinnedObject());
+                    using var gpuB = CreateStructuredInputBuffer(device, sizeof(float) * totalPixelCount, pinB.AddrOfPinnedObject());
+                    using var srvA = device.CreateShaderResourceView(gpuA);
+                    using var srvB = device.CreateShaderResourceView(gpuB);
+                    using var outBuf = CreateStructuredOutputBuffer(device, outCount);
+                    using var uav = device.CreateUnorderedAccessView(outBuf);
+                    using var cb = CreateParamsBuffer(device, (uint)pixelCount, (uint)pairCount);
+                    using var staging = CreateReadbackBuffer(device, outCount);
+
+                    ctx.CSSetShader(_batchedCs);
+                    ctx.CSSetShaderResources(0, new ID3D11ShaderResourceView[] { srvA!, srvB! });
+                    ctx.CSSetUnorderedAccessViews(0, new ID3D11UnorderedAccessView[] { uav! });
+                    ctx.CSSetConstantBuffer(0, cb);
+                    ctx.Dispatch(1, pairCount, 1);
+
+                    ctx.CopyResource(staging, outBuf);
+                    float[] vals = ReadBackFloatBuffer(ctx, staging, outCount);
+                    ClearBindings(ctx);
+
+                    double[] results = new double[pairCount];
+                    for (int index = 0; index < pairCount; index++)
+                    {
+                        results[index] = ReduceSsim(vals, threadsPerPair, pixelCount, index * threadsPerPair * 5);
+                    }
+                    return results;
+                }
+                finally
+                {
+                    if (pinA.IsAllocated) pinA.Free();
+                    if (pinB.IsAllocated) pinB.Free();
+                }
+            }
+        }
+
         public double ComputeSsimCpuFallback(float[] a, float[] b, int w, int h)
         {
             if (a == null || b == null) return 0.0;
@@ -296,9 +334,125 @@ void CSMain(uint3 DTid : SV_DispatchThreadID)
             return Math.Clamp(ssim, 0.0, 1.0);
         }
 
+        private static ID3D11Buffer CreateStructuredInputBuffer(ID3D11Device device, int sizeInBytes, IntPtr dataPointer)
+        {
+            var desc = new BufferDescription(
+                sizeInBytes,
+                BindFlags.ShaderResource,
+                ResourceUsage.Default,
+                CpuAccessFlags.None,
+                ResourceOptionFlags.BufferStructured,
+                sizeof(float));
+            return device.CreateBuffer(desc, new SubresourceData(dataPointer));
+        }
+
+        private static ID3D11Buffer CreateStructuredOutputBuffer(ID3D11Device device, int floatCount)
+        {
+            var desc = new BufferDescription(
+                sizeof(float) * floatCount,
+                BindFlags.UnorderedAccess,
+                ResourceUsage.Default,
+                CpuAccessFlags.None,
+                ResourceOptionFlags.BufferStructured,
+                sizeof(float));
+            return device.CreateBuffer(desc);
+        }
+
+        private static ID3D11Buffer CreateReadbackBuffer(ID3D11Device device, int floatCount)
+        {
+            return device.CreateBuffer(new BufferDescription(
+                sizeof(float) * floatCount,
+                BindFlags.None,
+                ResourceUsage.Staging,
+                CpuAccessFlags.Read,
+                ResourceOptionFlags.None,
+                0));
+        }
+
+        private static ID3D11Buffer CreateParamsBuffer(ID3D11Device device, uint firstValue, uint secondValue)
+        {
+            byte[] cbBytes = new byte[16];
+            BitConverter.TryWriteBytes(cbBytes.AsSpan(0, 4), firstValue);
+            BitConverter.TryWriteBytes(cbBytes.AsSpan(4, 4), secondValue);
+            var pin = GCHandle.Alloc(cbBytes, GCHandleType.Pinned);
+            try
+            {
+                return device.CreateBuffer(
+                    new BufferDescription(16, BindFlags.ConstantBuffer, ResourceUsage.Default, CpuAccessFlags.None, ResourceOptionFlags.None, 0),
+                    new SubresourceData(pin.AddrOfPinnedObject()));
+            }
+            finally
+            {
+                pin.Free();
+            }
+        }
+
+        private static float[] ReadBackFloatBuffer(ID3D11DeviceContext ctx, ID3D11Buffer staging, int floatCount)
+        {
+            var mapped = ctx.Map(staging, 0, MapMode.Read, Vortice.Direct3D11.MapFlags.None);
+            try
+            {
+                float[] vals = new float[floatCount];
+                Marshal.Copy(mapped.DataPointer, vals, 0, floatCount);
+                return vals;
+            }
+            finally
+            {
+                ctx.Unmap(staging, 0);
+            }
+        }
+
+        private static void ClearBindings(ID3D11DeviceContext ctx)
+        {
+            ctx.CSSetShader((ID3D11ComputeShader?)null);
+            ctx.CSSetShaderResources(0, new ID3D11ShaderResourceView[] { null!, null! });
+            ctx.CSSetUnorderedAccessViews(0, new ID3D11UnorderedAccessView[] { null! });
+        }
+
+        private static double ReduceSsim(float[] vals, int numThreads, int pixelCount, int startOffset = 0)
+        {
+            double sA = 0, sB = 0, sA2 = 0, sB2 = 0, sAB = 0;
+            for (int thread = 0; thread < numThreads; thread++)
+            {
+                int offset = startOffset + (thread * 5);
+                sA += vals[offset];
+                sB += vals[offset + 1];
+                sA2 += vals[offset + 2];
+                sB2 += vals[offset + 3];
+                sAB += vals[offset + 4];
+            }
+
+            double muA = sA / pixelCount;
+            double muB = sB / pixelCount;
+            double varA = sA2 / pixelCount - muA * muA;
+            double varB = sB2 / pixelCount - muB * muB;
+            double cov = sAB / pixelCount - muA * muB;
+
+            const double K1 = 0.01, K2 = 0.03, L = 255.0;
+            double C1 = (K1 * L) * (K1 * L);
+            double C2 = (K2 * L) * (K2 * L);
+            double num = (2.0 * muA * muB + C1) * (2.0 * cov + C2);
+            double den = (muA * muA + muB * muB + C1) * (varA + varB + C2);
+            if (den <= 0) return 0.0;
+            double ssim = num / den;
+            if (double.IsNaN(ssim) || double.IsInfinity(ssim)) return 0.0;
+            return Math.Clamp(ssim, 0.0, 1.0);
+        }
+
+        private double[] BuildFallbackBatch(List<(float[] a, float[] b)> pairs, int w, int h)
+        {
+            double[] fallback = new double[pairs.Count];
+            for (int index = 0; index < pairs.Count; index++)
+            {
+                fallback[index] = ComputeSsimGpu(pairs[index].a, pairs[index].b, w, h);
+            }
+            return fallback;
+        }
+
         public void Dispose()
         {
             try { _cs?.Dispose(); } catch { }
+            try { _batchedCs?.Dispose(); } catch { }
             try { _ctx?.Dispose(); } catch { }
             try { _device?.Dispose(); } catch { }
         }

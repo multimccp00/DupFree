@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Runtime.ExceptionServices;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using System.Windows;
@@ -35,17 +36,7 @@ namespace DupFree
                 Services.TelemetryService.TrackEvent("AppStart");
 
             // Global exception handlers to capture crashes (writes to temp file)
-            AppDomain.CurrentDomain.UnhandledException += (s, ev) =>
-            {
-                try
-                {
-                    var ex = ev.ExceptionObject as Exception;
-                    var path = Path.Combine(Path.GetTempPath(), "dupfree_crash.log");
-                    File.AppendAllText(path, $"[Unhandled] {DateTime.Now}: {ex}\n\n");
-                }
-                catch { }
-                ShowUnexpectedErrorDialog();
-            };
+            AppDomain.CurrentDomain.UnhandledException += OnUnhandledException;
 
             TaskScheduler.UnobservedTaskException += (s, ev) =>
             {
@@ -136,6 +127,27 @@ namespace DupFree
 
         // ensure we only show the error dialog once per run
         private static bool _errorDialogShown;
+
+        /// <summary>
+        /// Handles CLR unhandled exceptions including corrupted-state (access violation, etc.)
+        /// that can occur from native code in WPF MediaElement or Magick.NET.
+        /// The HandleProcessCorruptedStateExceptions attribute allows this method to catch
+        /// native SEH exceptions that would otherwise terminate the process silently.
+        /// </summary>
+        [HandleProcessCorruptedStateExceptions]
+        private static void OnUnhandledException(object sender, UnhandledExceptionEventArgs ev)
+        {
+            try
+            {
+                var ex = ev.ExceptionObject as Exception;
+                var msg = ex?.ToString() ?? ev.ExceptionObject?.ToString() ?? "(unknown)";
+                var path = Path.Combine(Path.GetTempPath(), "dupfree_crash.log");
+                File.AppendAllText(path, $"[Unhandled] {DateTime.Now}: {msg}\n\n");
+                Services.Log.Error($"[Unhandled crash] {msg}");
+            }
+            catch { }
+            ShowUnexpectedErrorDialog();
+        }
 
         private static void ShowUnexpectedErrorDialog()
         {

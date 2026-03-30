@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Collections.Generic;
+using System.Collections.Concurrent;
 using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Media;
@@ -18,7 +19,12 @@ namespace DupFree.Services
     public class ImagePreviewService
     {
         private static readonly string[] ImageExtensions = [".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp", ".tiff", ".ico"];
-        private static readonly string[] VideoExtensions = [".mp4", ".mov", ".avi", ".mkv", ".webm", ".wmv"];
+        private static readonly string[] VideoExtensions =
+        [
+            ".mp4", ".m4v", ".mov", ".avi", ".mkv", ".webm", ".wmv",
+            ".mpeg", ".mpg", ".mpe", ".3gp", ".3g2", ".mts", ".m2ts",
+            ".ts", ".flv", ".f4v", ".ogv", ".ogm", ".asf"
+        ];
 
         /// <summary>Returns true if the file extension denotes an image format supported by the previewer.</summary>
         /// <param name="filePath">Path to the file to inspect.</param>
@@ -36,6 +42,22 @@ namespace DupFree.Services
             }
         }
 
+        /// <summary>Check if file is a scannable image for duplicate-image search.</summary>
+        public static bool IsScannableImage(string filePath)
+        {
+            try
+            {
+                var extension = Path.GetExtension(filePath).ToLower();
+            // Exclude animated GIFs and known video formats from duplicate-image scanning.
+                return ImageExtensions.Where(ext => ext != ".gif").Any(ext => ext == extension) &&
+                       !VideoExtensions.Any(ext => ext == extension);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
         /// <summary>Returns true when the file is a supported video format (used to display poster/thumbnail).</summary>
         /// <param name="filePath">Path to the file to inspect.</param>
         /// <returns>True for common video file extensions (mp4, mkv, etc.).</returns>
@@ -44,7 +66,12 @@ namespace DupFree.Services
             try { return VideoExtensions.Contains(Path.GetExtension(filePath).ToLower()); } catch { return false; }
         }
 
+        // Cache for animated WebP detection — avoids re-reading headers on repeated calls (e.g. per-tile + GetThumbnail).
+        private static readonly ConcurrentDictionary<string, bool> _animatedWebPCache = new(StringComparer.OrdinalIgnoreCase);
+
         /// <summary>Determines whether a .webp file contains multiple frames (animated WebP).</summary>
+        /// <remarks>Uses a fast RIFF/ANIM byte-header check (~100 bytes read) with a per-path cache.
+        /// An animated WebP has an "ANIM" FourCC chunk in its RIFF container.</remarks>
         /// <param name="filePath">Path to the .webp file.</param>
         /// <returns>True if the WebP contains more than one frame.</returns>
         public static bool IsAnimatedWebP(string filePath)
@@ -52,8 +79,33 @@ namespace DupFree.Services
             try
             {
                 if (Path.GetExtension(filePath).ToLower() != ".webp") return false;
-                using var coll = new MagickImageCollection(filePath);
-                return coll.Count > 1;
+                return _animatedWebPCache.GetOrAdd(filePath, static path =>
+                {
+                    try
+                    {
+                        // An animated WebP is a RIFF WEBP container with an ANIM chunk.
+                        // We only need to scan at most ~200 bytes to find it.
+                        Span<byte> buf = stackalloc byte[200];
+                        using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 200);
+                        int read = fs.Read(buf);
+                        if (read < 16) return false;
+                        // Verify RIFF....WEBP header
+                        if (buf[0] != 'R' || buf[1] != 'I' || buf[2] != 'F' || buf[3] != 'F') return false;
+                        if (buf[8] != 'W' || buf[9] != 'E' || buf[10] != 'B' || buf[11] != 'P') return false;
+                        // Scan chunks looking for "ANIM"
+                        int pos = 12;
+                        while (pos + 8 <= read)
+                        {
+                            if (buf[pos] == 'A' && buf[pos + 1] == 'N' && buf[pos + 2] == 'I' && buf[pos + 3] == 'M')
+                                return true;
+                            // move to next chunk (chunk size is little-endian uint32 at pos+4, padded to even)
+                            uint chunkSize = (uint)(buf[pos + 4] | buf[pos + 5] << 8 | buf[pos + 6] << 16 | buf[pos + 7] << 24);
+                            pos += 8 + (int)((chunkSize + 1) & ~1u);
+                        }
+                        return false;
+                    }
+                    catch { return false; }
+                });
             }
             catch { return false; }
         }

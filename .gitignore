@@ -1,6 +1,7 @@
 # Build outputs
 bin/
 obj/
+out/
 
 # User-specific files
 *.user
@@ -21,7 +22,19 @@ Thumbs.db
 
 # Logs
 *.log
+*.txt
+*.etl
 
 # Custom build/package outputs
 out/
+
+# MSIX / AppX packaging outputs
+*.msix
+*.msixbundle
+*.msixupload
+*.appx
+*.appxbundle
+*.appxupload
+*.cer
+DupFree.Package/
 

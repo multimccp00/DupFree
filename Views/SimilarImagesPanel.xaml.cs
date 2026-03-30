@@ -126,6 +126,7 @@ namespace DupFree.Views
             _isScanning = true;
             ScanSimilarButton.Content = "Stop";
             StatusText.Text = "";
+            StatusText.Visibility = Visibility.Visible;
             SimilarScanProgressIndicator.Width = 0;
             SimilarScanProgressText.Text = "0%";
             SimilarScanProgressBarContainer.Visibility = Visibility.Visible;
@@ -196,6 +197,7 @@ namespace DupFree.Views
             {
                 double maxDistance = MaxDistanceSlider.Value;
                 StatusText.Text = "";
+                Log.Info($"SimilarImagesPanel: Starting scan (GPU requested=true, SIMD requested=false, maxDistance={maxDistance:F1})");
 
                 // This now streams groups via events while running
                 var groups = await _similarImageService.FindSimilarImagesAsync(
@@ -448,7 +450,7 @@ namespace DupFree.Views
 
         private void UpdateStatus(string status)
         {
-            StatusText.Text = "";
+            StatusText.Text = status;
         }
 
         private void UpdateProgress(int progress)

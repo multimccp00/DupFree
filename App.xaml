@@ -1,6 +1,7 @@
 <Application x:Class="DupFree.App"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             ShutdownMode="OnMainWindowClose"
              StartupUri="Views/MainWindow.xaml">
     <Application.Resources>
         <!-- Theme resources - Matching React DupeFinderApp exactly -->
